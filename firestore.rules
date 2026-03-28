@@ -1,0 +1,172 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: userId
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - email: string (optional)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - mode: string (required, 'Dev AI' or 'Dev AI Code')
+    //   - personality: string (required)
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/chats
+    // Document ID: auto-generated
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - title: string (required)
+    //   - mode: string (required, 'Dev AI' or 'Dev AI Code')
+    //   - createdAt: timestamp (required, immutable)
+    //   - updatedAt: timestamp (required)
+    //
+    // Collection: users/{userId}/chats/{chatId}/messages
+    // Document ID: auto-generated
+    // Fields:
+    //   - uid: string (required, immutable)
+    //   - role: string (required, 'user' or 'model')
+    //   - content: string (required)
+    //   - createdAt: timestamp (required, immutable)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.uid;
+    }
+
+    function uidUnchanged() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return !('uid' in request.resource.data) || request.resource.data.uid == resource.data.uid;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isRecent(time) {
+      return time is timestamp &&
+             time <= request.time + duration.value(5, 'm') &&
+             time > request.time - duration.value(5, 'm');
+    }
+
+    function isValidOptionalString(field, minLen, maxLen) {
+      return !(field in request.resource.data) ||
+             (request.resource.data[field] is string &&
+              request.resource.data[field].size() >= minLen &&
+              request.resource.data[field].size() <= maxLen);
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+             email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string &&
+             (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function isValidAttachments(atts) {
+      return atts is list && atts.size() <= 10 &&
+             atts.all(att, att is map &&
+                      ('dataUrl' in att) && ('mimeType' in att) &&
+                      att.dataUrl is string &&
+                      att.mimeType is string && att.mimeType.size() < 100);
+    }
+
+    function hasOnlyAllowedFields(data, allowedFields) {
+      return data.keys().hasOnly(allowedFields);
+    }
+
+    function isValidCustomization(data) {
+      return data is map &&
+             hasOnlyAllowedFields(data, ['fontSize', 'fontFamily', 'primaryColor', 'textColor', 'backgroundColor']) &&
+             (!( 'fontSize' in data ) || (data.fontSize is string && data.fontSize.size() < 20)) &&
+             (!( 'fontFamily' in data ) || (data.fontFamily is string && data.fontFamily.size() < 50)) &&
+             (!( 'primaryColor' in data ) || (data.primaryColor is string && data.primaryColor.size() < 20)) &&
+             (!( 'textColor' in data ) || (data.textColor is string && data.textColor.size() < 20)) &&
+             (!( 'backgroundColor' in data ) || (data.backgroundColor is string && data.backgroundColor.size() < 20));
+    }
+
+    function isValidUser(data) {
+      return data.uid == request.auth.uid &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.mode in ['Dev AI', 'Dev AI Code'] &&
+             data.personality is string && data.personality.size() < 500 &&
+             (!( 'theme' in data ) || data.theme in ['light', 'dark', 'auto']) &&
+             (!( 'colorTheme' in data ) || data.colorTheme in ['auto', 'blue', 'red', 'black', 'green', 'purple']) &&
+             (!( 'vibration' in data ) || data.vibration is bool) &&
+             (!( 'memory' in data ) || (data.memory is string && data.memory.size() < 5000)) &&
+             (!( 'fullscreenEditor' in data ) || data.fullscreenEditor is bool) &&
+             (!( 'notificationsEnabled' in data ) || data.notificationsEnabled is bool) &&
+             (!( 'email' in data ) || (data.email is string && isValidEmail(data.email))) &&
+             (!( 'displayName' in data ) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!( 'photoURL' in data ) || (data.photoURL is string && isValidUrl(data.photoURL))) &&
+             (!( 'customization' in data ) || isValidCustomization(data.customization)) &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidChat(data) {
+      return data.uid == request.auth.uid &&
+             data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.mode in ['Dev AI', 'Dev AI Code'] &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidMessage(data) {
+      return data.uid == request.auth.uid &&
+             data.role in ['user', 'model'] &&
+             data.content is string &&
+             data.createdAt is timestamp &&
+             (!( 'attachments' in data ) || isValidAttachments(data.attachments));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && uidUnchanged();
+      allow update: if isOwner(userId) && uidNotModified();
+      allow delete: if isOwner(userId);
+
+      match /chats/{chatId} {
+        allow read: if isOwner(userId);
+        allow create: if isOwner(userId) && uidUnchanged();
+        allow update: if isOwner(userId) && uidNotModified();
+        allow delete: if isOwner(userId);
+
+        match /messages/{messageId} {
+          allow read: if isOwner(userId);
+          allow create: if isOwner(userId) && uidUnchanged();
+          allow update: if isOwner(userId) && uidNotModified();
+          allow delete: if isOwner(userId);
+        }
+      }
+    }
+  }
+}

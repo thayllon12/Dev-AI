@@ -1,0 +1,112 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Open+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=Playfair+Display:wght@400;700;900&display=swap');
+
+@theme {
+  --color-bg-main: var(--bg-main);
+  --color-bg-sidebar: var(--bg-sidebar);
+  --color-bg-surface: var(--bg-surface);
+  --color-bg-surface-hover: var(--bg-surface-hover);
+  --color-bg-code: var(--bg-code);
+  --color-bg-code-header: var(--bg-code-header);
+  --color-bg-modal: var(--bg-modal);
+  --color-bg-modal-footer: var(--bg-modal-footer);
+  
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-text-muted: var(--text-muted);
+  
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+}
+
+:root {
+  /* Light Theme */
+  --bg-main: #ffffff;
+  --bg-sidebar: #f4f4f5;
+  --bg-surface: #f4f4f5;
+  --bg-surface-hover: #e4e4e7;
+  --bg-code: #f4f4f5;
+  --bg-code-header: #e4e4e7;
+  --bg-modal: #ffffff;
+  --bg-modal-footer: #f4f4f5;
+  
+  --text-primary: #18181b;
+  --text-secondary: #3f3f46;
+  --text-tertiary: #52525b;
+  --text-muted: #71717a;
+  
+  --border-subtle: #e4e4e7;
+  --border-strong: #d4d4d8;
+
+  --font-size-base: 16px;
+  --font-family-base: 'Inter', sans-serif;
+}
+
+body {
+  font-size: var(--font-size-base);
+  font-family: var(--font-family-base);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #4f4f4f;
+}
+
+:root.dark {
+  /* Dark Theme */
+  --bg-main: #212121;
+  --bg-sidebar: #171717;
+  --bg-surface: #2f2f2f;
+  --bg-surface-hover: #3f3f46;
+  --bg-code: #1e1e1e;
+  --bg-code-header: #2d2d2d;
+  --bg-modal: #212121;
+  --bg-modal-footer: #1a1a1a;
+  
+  --text-primary: #f4f4f5;
+  --text-secondary: #e4e4e7;
+  --text-tertiary: #d4d4d8;
+  --text-muted: #a1a1aa;
+  
+  --border-subtle: #3f3f46;
+  --border-strong: #52525b;
+}
+
+:root.theme-blue {
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+}
+
+:root.theme-red {
+  --primary: #ef4444;
+  --primary-hover: #dc2626;
+}
+
+:root.theme-black {
+  --primary: #3f3f46;
+  --primary-hover: #27272a;
+}
+
+:root.theme-green {
+  --primary: #10b981;
+  --primary-hover: #059669;
+}
+
+:root.theme-purple {
+  --primary: #8b5cf6;
+  --primary-hover: #7c3aed;
+}
