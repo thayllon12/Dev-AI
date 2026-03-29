@@ -1,9 +1,11 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
-import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreHorizontal } from "lucide-react";
+import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { AILogo } from "./AILogo";
+import { copyToClipboard } from "../lib/utils";
 
 interface MessageBubbleProps {
   msg: any;
@@ -12,6 +14,7 @@ interface MessageBubbleProps {
   userPhoto?: string | null;
   onRegenerate?: (msg: any) => void;
   onEdit?: (msg: any, newContent: string) => void;
+  onBranch?: (msg: any) => void;
   userSettings: any;
 }
 
@@ -22,22 +25,29 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   userPhoto,
   onRegenerate,
   onEdit,
+  onBranch,
   userSettings,
 }) => {
   const isUser = msg.role === "user";
-  const [copied, setCopied] = React.useState(false);
-  const [isEditing, setIsEditing] = React.useState(false);
-  const [editContent, setEditContent] = React.useState(msg.content);
-  const [showActions, setShowActions] = React.useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContent, setEditContent] = useState(msg.content);
+  const [showActions, setShowActions] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [showSelectText, setShowSelectText] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (isPlaying) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [isPlaying]);
 
   const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(msg.content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
+    await copyToClipboard(msg.content);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   const handleSaveEdit = () => {
@@ -56,7 +66,48 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     document.body.removeChild(link);
   };
 
+  const handleDownloadText = () => {
+    const blob = new Blob([msg.content], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `message-${Date.now()}.txt`;
+    a.click();
+  };
+
+  const toggleTTS = () => {
+    if (isPlaying) {
+      window.speechSynthesis.cancel();
+      setIsPlaying(false);
+    } else {
+      const utterance = new SpeechSynthesisUtterance(msg.content);
+      utterance.lang = 'pt-BR';
+      utterance.onend = () => setIsPlaying(false);
+      window.speechSynthesis.speak(utterance);
+      setIsPlaying(true);
+    }
+  };
+
   return (
+    <>
+      {showSelectText && (
+        <div className="fixed inset-0 z-[9999] bg-black/80 flex items-center justify-center p-4">
+          <div className="bg-bg-surface w-full max-w-3xl h-[80vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-border-strong">
+            <div className="flex justify-between items-center p-4 border-b border-border-subtle bg-bg-surface-hover">
+              <h3 className="font-bold text-text-primary">Selecionar Texto</h3>
+              <button onClick={() => setShowSelectText(false)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+            <div 
+              className="flex-1 w-full bg-transparent p-6 overflow-y-auto whitespace-pre-wrap break-words outline-none text-text-primary text-lg custom-scrollbar select-text" 
+            >
+              {msg.content}
+            </div>
+          </div>
+        </div>
+      )}
+
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -74,15 +125,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             ) : (
               <div className="text-sm font-bold">U</div>
             )
-          ) : isCodeMode ? (
-            <Code2 size={20} className="text-primary" />
           ) : (
-            <img
-              src="https://api.dicebear.com/7.x/bottts/svg?seed=DevAI&backgroundColor=007bff"
-              alt="Dev AI"
-              className="w-full h-full object-cover"
-              referrerPolicy="no-referrer"
-            />
+            <AILogo mode={userSettings.mode} />
           )}
         </div>
 
@@ -91,28 +135,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
             <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
               {isUser ? "Você" : "Dev AI"}
             </span>
-            {!isUser && (
-              <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-md font-bold uppercase tracking-tighter">
-                Pro
-              </span>
-            )}
           </div>
 
           <div
             className={`relative group transition-all duration-300 w-full break-words ${
               isUser ? "text-text-primary" : "text-text-primary"
             }`}
-            style={{
-              fontSize: userSettings.customization?.fontSize || "16px",
-              fontFamily: userSettings.customization?.fontFamily || "Inter",
-            }}
           >
           {isEditing ? (
             <div className="flex flex-col gap-3 min-w-[300px]">
               <textarea
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
-                className="w-full bg-white/10 border border-white/20 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-white/30 resize-none min-h-[100px]"
+                className="w-full bg-bg-surface border border-border-strong rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none min-h-[100px]"
                 autoFocus
               />
               <div className="flex justify-end gap-2">
@@ -121,13 +156,13 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     setIsEditing(false);
                     setEditContent(msg.content);
                   }}
-                  className="px-3 py-1.5 text-xs font-bold hover:bg-white/10 rounded-lg transition-colors"
+                  className="px-3 py-1.5 text-xs font-bold hover:bg-bg-surface-hover rounded-lg transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   onClick={handleSaveEdit}
-                  className="px-3 py-1.5 text-xs font-bold bg-white text-primary rounded-lg hover:bg-white/90 transition-colors"
+                  className="px-3 py-1.5 text-xs font-bold bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
                 >
                   Salvar
                 </button>
@@ -175,14 +210,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     </blockquote>
                   ),
                   img: ({ src, alt }) => {
-                    const isGeneratedImage = src?.startsWith("data:image");
+                    if (!src) return null;
+                    const isGeneratedImage = src.startsWith("data:image");
                     return (
-                      <div className="relative group my-4 rounded-xl overflow-hidden shadow-2xl border border-border-strong">
-                        <img src={src} alt={alt} className="max-w-full h-auto" referrerPolicy="no-referrer" />
+                      <span className="relative group my-4 rounded-xl overflow-hidden shadow-2xl border border-border-strong block w-fit">
+                        <img src={src} alt={alt || "Imagem"} className="max-w-full h-auto" referrerPolicy="no-referrer" />
                         {isGeneratedImage && (
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                          <span className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
                             <button
-                              onClick={() => handleDownloadImage(src!)}
+                              onClick={() => handleDownloadImage(src)}
                               className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
                               title="Baixar Imagem"
                             >
@@ -195,9 +231,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                             >
                               <ExternalLink size={24} />
                             </button>
-                          </div>
+                          </span>
                         )}
-                      </div>
+                      </span>
                     );
                   },
                 }}
@@ -228,86 +264,115 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
 
           {/* Actions Menu */}
-          <div className="mt-2 flex flex-col items-start w-full">
-            <button
-              onClick={() => setShowActions(!showActions)}
-              className={`p-1.5 rounded-lg transition-all ${
-                showActions ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
-              }`}
-              title="Mais opções"
-            >
-              <MoreHorizontal size={18} />
-            </button>
-
-            {showActions && (
-              <motion.div
-                initial={{ opacity: 0, y: -5 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={`flex items-center gap-1 mt-1 p-1 bg-bg-surface border border-border-subtle rounded-xl shadow-xl z-10 ${
-                  isUser ? "self-end" : "self-start"
+          <div className="mt-2 flex items-center gap-2 w-full">
+            <div className="relative">
+              <button
+                onClick={() => setShowActions(!showActions)}
+                className={`p-1.5 rounded-lg transition-all ${
+                  showActions ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
                 }`}
+                title="Mais opções"
               >
-                <button
-                  onClick={() => {
-                    handleCopy();
-                    setShowActions(false);
-                  }}
-                  className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                <MoreVertical size={18} />
+              </button>
+
+              {showActions && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className={`absolute top-full mt-1 w-48 py-1 bg-bg-surface border border-border-subtle rounded-xl shadow-xl z-10 flex flex-col ${
+                    isUser ? "right-0" : "left-0"
+                  }`}
                 >
-                  {copied ? <CheckCheck size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                  <span>Copiar</span>
-                </button>
-
-                {isUser && onEdit && (
                   <button
                     onClick={() => {
-                      setIsEditing(true);
+                      handleCopy();
                       setShowActions(false);
                     }}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
                   >
-                    <Edit2 size={14} />
-                    <span>Editar</span>
+                    {copied ? <CheckCheck size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                    <span>Copiar</span>
                   </button>
-                )}
 
-                {!isUser && onRegenerate && (
                   <button
                     onClick={() => {
-                      onRegenerate(msg);
+                      setShowSelectText(true);
                       setShowActions(false);
                     }}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
                   >
-                    <RotateCcw size={14} />
-                    <span>Refazer</span>
+                    <ExternalLink size={16} />
+                    <span>Selecionar texto</span>
                   </button>
-                )}
 
-                {/* Download option if message has images */}
-                {(msg.attachments?.length > 0 || msg.content.includes("data:image")) && (
+                  {isUser && onEdit && (
+                    <button
+                      onClick={() => {
+                        setIsEditing(true);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <Edit2 size={16} />
+                      <span>Editar</span>
+                    </button>
+                  )}
+
+                  {!isUser && onRegenerate && (
+                    <button
+                      onClick={() => {
+                        onRegenerate(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <RotateCcw size={16} />
+                      <span>Refazer</span>
+                    </button>
+                  )}
+
+                  {!isUser && onBranch && (
+                    <button
+                      onClick={() => {
+                        onBranch(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <SplitSquareHorizontal size={16} />
+                      <span>Derivar novo chat</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={() => {
-                      // If it's a generated image in content
-                      const match = msg.content.match(/!\[.*?\]\((data:image\/.*?;base64,.*?)\)/);
-                      if (match && match[1]) {
-                        handleDownloadImage(match[1]);
-                      } else if (msg.attachments && msg.attachments.length > 0) {
-                        // Download first attachment for simplicity in menu
-                        handleDownloadImage(msg.attachments[0].dataUrl);
-                      }
+                      handleDownloadText();
                       setShowActions(false);
                     }}
-                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
                   >
-                    <Download size={14} />
+                    <Download size={16} />
                     <span>Download</span>
                   </button>
-                )}
-              </motion.div>
+                </motion.div>
+              )}
+            </div>
+
+            {!isUser && (
+              <button
+                onClick={toggleTTS}
+                className={`p-1.5 rounded-lg transition-all ${
+                  isPlaying ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
+                }`}
+                title={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
+              >
+                {isPlaying ? <VolumeX size={18} /> : <Volume2 size={18} />}
+              </button>
             )}
           </div>
         </div>
       </motion.div>
-    );
-  };
+    </>
+  );
+};

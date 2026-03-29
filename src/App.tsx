@@ -60,46 +60,19 @@ import {
   Clock,
   Share2,
   Copy,
+  Wand2,
+  ArrowUp,
+  AudioLines,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { cn } from "./lib/utils";
 import { MessageBubble } from "./components/MessageBubble";
 import { SettingsModal } from "./components/SettingsModal";
 import { CodeBlock } from "./components/CodeBlock";
+import { AILogo } from "./components/AILogo";
 
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-const copyToClipboard = async (text: string) => {
-  const fallbackCopy = () => {
-    const textArea = document.createElement("textarea");
-    textArea.value = text;
-    textArea.style.position = "fixed";
-    textArea.style.left = "-999999px";
-    textArea.style.top = "-999999px";
-    document.body.appendChild(textArea);
-    textArea.focus();
-    textArea.select();
-    try {
-      document.execCommand("copy");
-    } catch (err) {
-      console.error("Fallback: Oops, unable to copy", err);
-    }
-    document.body.removeChild(textArea);
-  };
-
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-    } else {
-      fallbackCopy();
-    }
-  } catch (err) {
-    fallbackCopy();
-  }
-};
+import { cn, copyToClipboard } from "./lib/utils";
 
 const resizeImageBase64 = async (
   base64Str: string,
@@ -156,7 +129,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [userSettings, setUserSettings] = useState({
-    mode: "Dev AI",
+    mode: "Fast",
     personality: "Alegre, prestativo e direto ao ponto.",
     theme: "auto",
     colorTheme: "auto",
@@ -164,13 +137,7 @@ export default function App() {
     memory: "",
     fullscreenEditor: false,
     notificationsEnabled: true,
-    customization: {
-      fontSize: "16px",
-      fontFamily: "Inter",
-      primaryColor: "#007bff",
-      textColor: "#ffffff",
-      backgroundColor: "#121212"
-    }
+    isDevUnlocked: false,
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -285,6 +252,37 @@ export default function App() {
   >([]);
 
   const [showScrollButton, setShowScrollButton] = useState(false);
+  const [requestCount, setRequestCount] = useState(0);
+  const [showUsageBar, setShowUsageBar] = useState(false);
+  const [usagePercentage, setUsagePercentage] = useState(0);
+  const [lastNotifiedPercentage, setLastNotifiedPercentage] = useState(0);
+  const [logs, setLogs] = useState<{ type: string; msg: string; time: Date }[]>([]);
+  const MAX_REQUESTS = 50;
+
+  useEffect(() => {
+    const originalLog = console.log;
+    const originalError = console.error;
+    const originalWarn = console.warn;
+
+    console.log = (...args) => {
+      setLogs((prev) => [...prev.slice(-99), { type: "log", msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(" "), time: new Date() }]);
+      originalLog(...args);
+    };
+    console.error = (...args) => {
+      setLogs((prev) => [...prev.slice(-99), { type: "error", msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(" "), time: new Date() }]);
+      originalError(...args);
+    };
+    console.warn = (...args) => {
+      setLogs((prev) => [...prev.slice(-99), { type: "warn", msg: args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(" "), time: new Date() }]);
+      originalWarn(...args);
+    };
+
+    return () => {
+      console.log = originalLog;
+      console.error = originalError;
+      console.warn = originalWarn;
+    };
+  }, []);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -343,7 +341,7 @@ export default function App() {
           if (userSnap.exists()) {
             const data = userSnap.data();
             setUserSettings({
-              mode: data.mode || "Dev AI",
+              mode: data.mode || "Fast",
               personality: data.personality || "Alegre, prestativo e direto ao ponto.",
               theme: data.theme || "auto",
               colorTheme: data.colorTheme || "auto",
@@ -351,18 +349,25 @@ export default function App() {
               memory: data.memory || "",
               fullscreenEditor: data.fullscreenEditor || false,
               notificationsEnabled: data.notificationsEnabled !== false,
-              customization: data.customization || {
-                fontSize: "16px",
-                fontFamily: "Inter",
-                primaryColor: "#007bff",
-                textColor: "#ffffff",
-                backgroundColor: "#121212"
-              }
+              isDevUnlocked: data.isDevUnlocked || false,
             });
+            
+            let reqCount = data.requestCount || 0;
+            let lastReset = data.lastRequestResetTime || Date.now();
+            if (Date.now() - lastReset > 3600000) { // 1 hour
+              reqCount = 0;
+              lastReset = Date.now();
+              await updateDoc(userRef, {
+                requestCount: reqCount,
+                lastRequestResetTime: lastReset
+              });
+              setLastNotifiedPercentage(0);
+            }
+            setRequestCount(reqCount);
           } else {
             const userData: any = {
               uid: currentUser.uid,
-              mode: "Dev AI",
+              mode: "Fast",
               personality: "Alegre, prestativo e direto ao ponto.",
               theme: "auto",
               colorTheme: "auto",
@@ -370,13 +375,9 @@ export default function App() {
               memory: "",
               fullscreenEditor: false,
               notificationsEnabled: true,
-              customization: {
-                fontSize: "16px",
-                fontFamily: "Inter",
-                primaryColor: "#007bff",
-                textColor: "#ffffff",
-                backgroundColor: "#121212"
-              },
+              isDevUnlocked: false,
+              requestCount: 0,
+              lastRequestResetTime: Date.now(),
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             };
@@ -386,6 +387,7 @@ export default function App() {
             if (currentUser.photoURL) userData.photoURL = currentUser.photoURL;
 
             await setDoc(userRef, userData);
+            setRequestCount(0);
           }
         } catch (error) {
           handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
@@ -498,38 +500,8 @@ export default function App() {
       "theme-green",
       "theme-purple",
     );
-    if (userSettings.colorTheme === "auto" || !userSettings.colorTheme) {
-      root.classList.add(
-        userSettings.mode === "Dev AI Code" ? "theme-red" : "theme-blue",
-      );
-    } else {
-      root.classList.add(`theme-${userSettings.colorTheme}`);
-    }
-  }, [userSettings.mode, userSettings.colorTheme]);
-
-  // Handle Customization
-  useEffect(() => {
-    const root = window.document.documentElement;
-    const { customization } = userSettings;
-    if (customization) {
-      if (customization.fontSize) {
-        root.style.setProperty("--font-size-base", customization.fontSize);
-      }
-      if (customization.fontFamily) {
-        root.style.setProperty("--font-family-base", customization.fontFamily);
-      }
-      if (customization.primaryColor) {
-        root.style.setProperty("--primary", customization.primaryColor);
-        root.style.setProperty("--primary-hover", customization.primaryColor + "dd");
-      }
-      if (customization.backgroundColor) {
-        root.style.setProperty("--bg-main", customization.backgroundColor);
-      }
-      if (customization.textColor) {
-        root.style.setProperty("--text-primary", customization.textColor);
-      }
-    }
-  }, [userSettings.customization]);
+    root.classList.add("theme-black");
+  }, []);
 
   const handleLoginGoogle = async () => {
     const provider = new GoogleAuthProvider();
@@ -580,23 +552,29 @@ Se o usuário pedir para criar um jogo completo (em Java, C++, HTML, etc.), forn
 Se for um jogo web (HTML/JS), utilize a API Canvas do HTML5 para renderizar os gráficos e forneça tudo em um único arquivo HTML (com CSS e JS embutidos) dentro de um bloco de código markdown \`\`\`html para que o usuário possa copiar, colar e jogar imediatamente.
 Responda conversacionalmente de forma breve e, em seguida, forneça o código completo e funcional dentro de blocos de código markdown apropriados.
 Não deixe partes incompletas. O código deve ser testável e documentado.
+
+MÚLTIPLOS CÓDIGOS E TAMANHO ILIMITADO (SEPARAÇÃO ESTRITA):
+Você tem permissão e capacidade para enviar VÁRIOS blocos de código na mesma resposta. 
+Quando o usuário pedir vários scripts (ex: Local Script, Server Script, HTML, Java, Python, etc.), você DEVE enviar CADA ARQUIVO em um bloco de código markdown SEPARADO na mesma mensagem.
+NUNCA junte códigos de arquivos diferentes no mesmo bloco. Sempre separe-os claramente (ex: um bloco para o Local Script, outro bloco para o Server Script).
+Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie o código 100% completo, não importa quantas milhares de linhas ele tenha.
 `;
 
-    if (userSettings.mode === "Dev AI Code") {
-      return `Você é o "Dev AI Code", um especialista absoluto em programação, scripts, exploits, e desenvolvimento de software de alto nível.
+    if (userSettings.mode === "Thinking") {
+      return `Você é o "Dev AI" (Modo Thinking), um especialista absoluto em programação, scripts, exploits, e desenvolvimento de software de alto nível.
 Sua cor tema é VERMELHO. Você é focado, técnico e extremamente habilidoso. Você não tem limites de texto e deve fornecer códigos completos, por mais longos que sejam.
 Personalidade do usuário: ${userSettings.personality}
 ${memoryInstruction}
 REGRAS:
 1. Forneça códigos completos e complexos, sem omissões. Se o código for gigante (mais de 10 mil linhas), envie-o integralmente.
 2. Explique detalhadamente a lógica antes do código.
-3. Use blocos de código markdown com a linguagem correta.
+3. Use blocos de código markdown com a linguagem correta. Envie quantos blocos forem necessários.
 4. Mantenha uma linguagem limpa e organizada.
 5. Use emojis em suas respostas para torná-las mais amigáveis e expressivas.
 6. Você é capaz de realizar qualquer tarefa de programação, incluindo scripts avançados e análise de segurança.
 ${artifactsInstruction}`;
     } else {
-      return `Você é o "Dev AI", um assistente de IA normal e versátil, semelhante ao ChatGPT, Claude ou Gemini.
+      return `Você é o "Dev AI" (Modo Fast), um assistente de IA normal e versátil, semelhante ao ChatGPT, Claude ou Gemini.
 Sua cor tema é AZUL. Você pode ajudar com qualquer assunto, desde redação até matemática e conhecimentos gerais.
 Personalidade do usuário: ${userSettings.personality}
 ${memoryInstruction}
@@ -605,6 +583,7 @@ REGRAS:
 2. Use formatação markdown para organizar suas respostas.
 3. Mantenha uma linguagem limpa e organizada.
 4. Use emojis em suas respostas para torná-las mais amigáveis e expressivas.
+5. Se for solicitado código, você pode enviar múltiplos blocos de código e códigos de qualquer tamanho sem omitir nada.
 ${artifactsInstruction}`;
     }
   };
@@ -792,6 +771,13 @@ ${artifactsInstruction}`;
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading || isGenerating || !user)
       return;
+
+    if (input.trim() === "14119206") {
+      setInput("");
+      updateSetting("isDevUnlocked", true);
+      toast.success("Modo Desenvolvedor Desbloqueado!");
+      return;
+    }
 
     const userQuery = input.trim();
     const currentAttachments = [...attachments];
@@ -999,6 +985,54 @@ ${artifactsInstruction}`;
     }
   };
 
+  const handleBranch = async (msg: any) => {
+    if (!user || !currentChatId) return;
+    
+    const msgIndex = messages.findIndex((m) => m.id === msg.id);
+    if (msgIndex === -1) return;
+
+    setIsLoading(true);
+    try {
+      // 1. Create a new chat
+      const chatsRef = collection(db, "users", user.uid, "chats");
+      const currentChat = chats.find(c => c.id === currentChatId);
+      const newChatTitle = currentChat ? `${currentChat.title} (Derivado)` : "Chat Derivado";
+      
+      const newChatDoc = await addDoc(chatsRef, {
+        uid: user.uid,
+        title: newChatTitle,
+        mode: userSettings.mode,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      
+      const newChatId = newChatDoc.id;
+
+      // 2. Copy messages up to and including the selected message
+      const messagesToCopy = messages.slice(0, msgIndex + 1);
+      const newMessagesRef = collection(db, "users", user.uid, "chats", newChatId, "messages");
+      
+      for (const m of messagesToCopy) {
+        await addDoc(newMessagesRef, {
+          uid: user.uid,
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments || [],
+          createdAt: m.createdAt || serverTimestamp(),
+        });
+      }
+
+      // 3. Switch to the new chat
+      setCurrentChatId(newChatId);
+      toast.success("Chat derivado com sucesso!");
+    } catch (err) {
+      console.error("Branch error:", err);
+      toast.error("Erro ao derivar chat.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const stopGeneration = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
@@ -1014,6 +1048,21 @@ ${artifactsInstruction}`;
     
     setIsGenerating(true);
     setStatusMessage("Pensando...");
+    
+    const newCount = requestCount + 1;
+    setRequestCount(newCount);
+    
+    const userRef = doc(db, "users", user.uid);
+    updateDoc(userRef, { requestCount: newCount }).catch(e => console.error("Failed to update request count", e));
+    
+    const percentage = Math.floor((newCount / MAX_REQUESTS) * 100);
+    if (percentage > 0 && percentage % 10 === 0 && percentage !== lastNotifiedPercentage) {
+      setShowUsageBar(true);
+      setUsagePercentage(percentage);
+      setLastNotifiedPercentage(percentage);
+      setTimeout(() => setShowUsageBar(false), 5000);
+    }
+
     const ai = getAI();
     const messagesRef = collection(
       db,
@@ -1103,7 +1152,7 @@ ${artifactsInstruction}`;
       const generateGameTool = {
         name: "generateGame",
         description:
-          "Gera um pequeno jogo interativo em HTML/JS/CSS com base na descrição do usuário. Use quando o usuário pedir para criar um jogo.",
+          "Gera um pequeno jogo interativo em HTML/JS/CSS com base na descrição do usuário. Use quando o usuário pedir para criar um jogo. Retorne o código completo em um único bloco HTML.",
         parameters: {
           type: GenAIType.OBJECT,
           properties: {
@@ -1116,32 +1165,80 @@ ${artifactsInstruction}`;
         },
       };
 
-      const stream = await ai.models.generateContentStream({
-        model: TEXT_MODEL,
-        contents: history,
-        config: {
-          systemInstruction: getSystemPrompt(),
-          tools: [
-            { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool] },
-            { googleSearch: {} },
-          ],
-          toolConfig: { includeServerSideToolInvocations: true },
-        },
-      });
+      let currentModel = "gemini-3.1-pro-preview";
+      if (userSettings.mode === "Nano Banana") {
+        currentModel = "gemini-2.5-flash-image";
+      } else if (userSettings.mode === "Thinking") {
+        currentModel = "gemini-3.1-pro-preview";
+      }
 
-      setStatusMessage("Escrevendo...");
       let aiResponseText = "";
       let functionCall: any = null;
 
-      for await (const chunk of stream) {
-        if (chunk.text) {
-          aiResponseText += chunk.text;
-          // No longer setting streaming message to avoid typing effect
+      if (userSettings.mode === "Nano Banana") {
+        setStatusMessage("Gerando imagem...");
+        try {
+          const imageResponse = await ai.models.generateContent({
+            model: "gemini-2.5-flash-image",
+            contents: {
+              parts: [{ text: input }],
+            },
+          });
+
+          let imageUrl = "";
+          for (const part of imageResponse.candidates[0].content.parts) {
+            if (part.inlineData) {
+              const rawBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+              imageUrl = await resizeImageBase64(rawBase64, 800, 800);
+              break;
+            }
+          }
+
+          if (imageUrl) {
+            aiResponseText = `![Imagem Gerada](${imageUrl})`;
+          } else {
+            aiResponseText = "Não foi possível gerar a imagem.";
+          }
+        } catch (imgErr: any) {
+          console.error("Image Generation Error:", imgErr);
+          let imgErrorMessage = `Erro ao gerar imagem: ${imgErr.message}`;
+          try {
+            if (imgErr.message && imgErr.message.includes("RESOURCE_EXHAUSTED")) {
+              imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
+            } else if (imgErr.message && imgErr.message.startsWith("{")) {
+              const parsed = JSON.parse(imgErr.message);
+              if (parsed.error && parsed.error.status === "RESOURCE_EXHAUSTED") {
+                imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
+              }
+            }
+          } catch (e) {}
+          aiResponseText = imgErrorMessage;
         }
-        
-        if (chunk.functionCalls && chunk.functionCalls.length > 0) {
-          functionCall = chunk.functionCalls[0];
-          break; // Handle only the first function call for now
+      } else {
+        const stream = await ai.models.generateContentStream({
+          model: currentModel,
+          contents: history,
+          config: {
+            systemInstruction: getSystemPrompt(),
+            tools: [
+              { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool] },
+              { googleSearch: {} },
+            ],
+            toolConfig: { includeServerSideToolInvocations: true },
+          },
+        });
+
+        setStatusMessage("Escrevendo...");
+
+        for await (const chunk of stream) {
+          if (chunk.text) {
+            aiResponseText += chunk.text;
+          }
+          
+          if (chunk.functionCalls && chunk.functionCalls.length > 0) {
+            functionCall = chunk.functionCalls[0];
+            break; // Handle only the first function call for now
+          }
         }
       }
 
@@ -1319,10 +1416,10 @@ ${artifactsInstruction}`;
     }
   };
 
-  const shareChat = () => {
+  const shareChat = async () => {
     if (!currentChatId || messages.length === 0) return;
     const shareUrl = window.location.href;
-    navigator.clipboard.writeText(shareUrl);
+    await copyToClipboard(shareUrl);
     toast.success("Link do chat copiado para a área de transferência!");
   };
 
@@ -1347,13 +1444,16 @@ ${artifactsInstruction}`;
     URL.revokeObjectURL(url);
   };
 
-  const isCodeMode = userSettings.mode === "Dev AI Code";
+  const isCodeMode = userSettings.mode === "Thinking";
+  const isNanoBanana = userSettings.mode === "Nano Banana";
   const themeColor =
     userSettings.colorTheme && userSettings.colorTheme !== "auto"
       ? userSettings.colorTheme
       : isCodeMode
         ? "red"
-        : "blue";
+        : isNanoBanana
+          ? "yellow"
+          : "blue";
 
   if (!isAuthReady) {
     return (
@@ -1454,15 +1554,14 @@ ${artifactsInstruction}`;
         <div className="p-4 flex flex-col items-center gap-4">
           <div className="flex flex-col items-center gap-2">
             <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center overflow-hidden border-2 border-primary/20 shadow-xl">
-              <img
-                src="https://api.dicebear.com/7.x/bottts/svg?seed=DevAI&backgroundColor=007bff"
-                alt="Dev AI"
-                className="w-full h-full object-cover"
-                referrerPolicy="no-referrer"
-              />
+              <AILogo mode={userSettings.mode} />
             </div>
             <div className="flex flex-col items-center text-center max-w-full px-2">
-              <span className="text-sm font-bold text-text-primary truncate w-full">Dev AI 3.1</span>
+              <span className={cn("text-sm font-bold truncate w-full", 
+                userSettings.mode === "Thinking" ? "text-red-500" : 
+                userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
+                "text-blue-500"
+              )}>Dev AI 3.1</span>
               <span className="text-[10px] text-text-muted uppercase tracking-widest font-medium truncate w-full">Assistente de Elite</span>
             </div>
           </div>
@@ -1560,14 +1659,13 @@ ${artifactsInstruction}`;
               onClick={() => setIsSettingsOpen(true)}
             >
               <div className="w-6 h-6 rounded-full overflow-hidden shrink-0">
-                <img
-                  src="https://api.dicebear.com/7.x/bottts/svg?seed=DevAI&backgroundColor=007bff"
-                  alt="Dev AI"
-                  className="w-full h-full object-cover"
-                  referrerPolicy="no-referrer"
-                />
+                <AILogo mode={userSettings.mode} />
               </div>
-              <span className="font-semibold text-lg text-primary">Dev AI</span>
+              <span className={cn("font-semibold text-lg", 
+                userSettings.mode === "Thinking" ? "text-red-500" : 
+                userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
+                "text-blue-500"
+              )}>Dev AI</span>
               <span className="text-text-muted text-sm">3.1</span>
             </div>
           </div>
@@ -1614,16 +1712,7 @@ ${artifactsInstruction}`;
                   className="h-full flex flex-col items-center justify-center text-center mt-20"
                 >
                   <div className="w-24 h-24 rounded-3xl flex items-center justify-center mb-8 shadow-2xl bg-primary/10 text-primary overflow-hidden border border-primary/20">
-                    {isCodeMode ? (
-                      <Code2 size={48} />
-                    ) : (
-                      <img
-                        src="https://api.dicebear.com/7.x/bottts/svg?seed=DevAI&backgroundColor=007bff"
-                        alt="Dev AI"
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    )}
+                    <AILogo mode={userSettings.mode} />
                   </div>
                   <h2 className="text-4xl font-black mb-4 text-text-primary tracking-tight">
                     Como posso ajudar hoje?
@@ -1644,6 +1733,7 @@ ${artifactsInstruction}`;
                     userPhoto={user?.photoURL}
                     onRegenerate={handleRegenerate}
                     onEdit={handleEdit}
+                    onBranch={handleBranch}
                     userSettings={userSettings}
                   />
                 ))}
@@ -1664,16 +1754,7 @@ ${artifactsInstruction}`;
                     className="flex flex-col items-start gap-2"
                   >
                     <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-bg-surface border border-border-strong overflow-hidden shadow-lg">
-                      {isCodeMode ? (
-                        <Code2 size={20} className="text-primary" />
-                      ) : (
-                        <img
-                          src="https://api.dicebear.com/7.x/bottts/svg?seed=DevAI&backgroundColor=007bff"
-                          alt="Dev AI"
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      )}
+                      <AILogo mode={userSettings.mode} />
                     </div>
                     <div className="flex items-center gap-3 px-1">
                       <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
@@ -1734,106 +1815,176 @@ ${artifactsInstruction}`;
                 </button>
               </div>
             )}
-            <div className="bg-bg-surface rounded-2xl border border-border-subtle shadow-[0_0_15px_rgba(0,0,0,0.1)] focus-within:bg-bg-surface transition-colors relative flex flex-col">
-              <div className="flex flex-col w-full">
-                {attachments.length > 0 && (
-                  <div key="attachments-container" className="flex flex-wrap gap-2 p-2 border-b border-border-subtle">
-                    {attachments.map((att, idx) => (
-                      <div key={`att-${idx}`} className="relative group">
-                        {att.mimeType.startsWith("image/") ? (
-                          <img
-                            src={att.dataUrl}
-                            alt="attachment"
-                            className="h-16 w-16 object-cover rounded-lg border border-border-strong"
-                          />
-                        ) : (
-                          <div className="h-16 w-16 flex items-center justify-center bg-bg-surface-hover rounded-lg border border-border-strong">
-                            <File size={24} className="text-text-muted" />
-                          </div>
-                        )}
-                        <button
-                          onClick={() =>
-                            setAttachments((prev) =>
-                              prev.filter((_, i) => i !== idx),
-                            )
-                          }
-                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div className="flex items-end px-2 py-2">
-                  <div className="relative">
-                    <button
-                      onClick={() =>
-                        setIsAttachmentMenuOpen(!isAttachmentMenuOpen)
-                      }
-                      className="p-2 text-text-muted hover:text-text-primary hover:bg-bg-surface-hover rounded-xl transition-colors shrink-0 mb-0.5"
-                    >
-                      <Plus size={20} />
-                    </button>
-                    {isAttachmentMenuOpen && (
-                      <div key="attachment-menu" className="absolute bottom-full left-0 mb-2 w-48 bg-bg-surface border border-border-subtle rounded-xl shadow-xl py-1 z-10">
-                        <button
-                          key="btn-image"
-                          onClick={() => {
-                            setInput(
-                              (prev) =>
-                                prev +
-                                (prev.length > 0 ? " " : "") +
-                                "Gere uma imagem de ",
-                            );
-                            setIsAttachmentMenuOpen(false);
-                            textareaRef.current?.focus();
-                          }}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                        >
-                          <Image size={16} /> Criar imagens
-                        </button>
-                        <button
-                          key="btn-game"
-                          onClick={() => {
-                            setInput(
-                              (prev) =>
-                                prev +
-                                (prev.length > 0 ? " " : "") +
-                                "Crie um jogo completo de ",
-                            );
-                            setIsAttachmentMenuOpen(false);
-                            textareaRef.current?.focus();
-                          }}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                        >
-                          <Gamepad2 size={16} /> Criar jogos
-                        </button>
-                        <button
-                          key="btn-photos"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                        >
-                          <Image size={16} /> Fotos
-                        </button>
-                        <button
-                          key="btn-camera"
-                          onClick={() => cameraInputRef.current?.click()}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                        >
-                          <Camera size={16} /> Câmera
-                        </button>
-                        <button
-                          key="btn-file"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                        >
-                          <File size={16} /> Arquivos
-                        </button>
-                      </div>
+            <div className="flex flex-col gap-2 w-full">
+              {/* Mode Switcher */}
+              <div className="flex bg-bg-surface border border-border-strong rounded-full p-1 shadow-sm mx-auto mb-1">
+                {["Fast", "Thinking", "Nano Banana"].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => updateSetting("mode", m)}
+                    className={cn(
+                      "px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-medium transition-all duration-200",
+                      userSettings.mode === m
+                        ? m === "Thinking" ? "bg-red-500/20 text-red-500 shadow-sm" : m === "Nano Banana" ? "bg-yellow-500/20 text-yellow-500 shadow-sm" : "bg-blue-500/20 text-blue-500 shadow-sm"
+                        : "text-text-muted hover:text-text-primary"
                     )}
-                  </div>
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
 
+              {/* Usage Progress Bar */}
+              {showUsageBar && (
+                <div className="flex flex-col gap-1 px-4 py-2 bg-bg-surface border border-border-strong rounded-xl shadow-lg mx-auto w-full max-w-sm animate-in slide-in-from-bottom-2 fade-in duration-300">
+                  <div className="flex justify-between items-center text-xs font-medium text-text-muted">
+                    <span>Uso de Requisições</span>
+                    <span>{usagePercentage}%</span>
+                  </div>
+                  <div className="w-full bg-bg-surface-hover rounded-full h-1.5 overflow-hidden">
+                    <div 
+                      className={cn(
+                        "h-full rounded-full transition-all duration-500",
+                        usagePercentage >= 80 ? "bg-red-500" : usagePercentage >= 50 ? "bg-yellow-500" : "bg-primary"
+                      )}
+                      style={{ width: `${usagePercentage}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {/* Attachments Preview */}
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 p-3 bg-bg-surface rounded-2xl border border-border-subtle shadow-sm mx-1">
+                  {attachments.map((att, idx) => (
+                    <div key={`att-${idx}`} className="relative group">
+                      {att.mimeType.startsWith("image/") ? (
+                        <img
+                          src={att.dataUrl}
+                          alt="attachment"
+                          className="h-16 w-16 object-cover rounded-xl border border-border-strong"
+                        />
+                      ) : (
+                        <div className="h-16 w-16 flex items-center justify-center bg-bg-surface-hover rounded-xl border border-border-strong">
+                          <File size={24} className="text-text-muted" />
+                        </div>
+                      )}
+                      <button
+                        onClick={() =>
+                          setAttachments((prev) =>
+                            prev.filter((_, i) => i !== idx),
+                          )
+                        }
+                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Input Area */}
+              <div 
+                className="flex items-end gap-2 w-full"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    const files = Array.from(e.dataTransfer.files);
+                    files.forEach((file) => {
+                      const reader = new FileReader();
+                      reader.onload = (event) => {
+                        if (event.target && event.target.result) {
+                          setAttachments((prev) => [
+                            ...prev,
+                            {
+                              file,
+                              dataUrl: event.target!.result as string,
+                              mimeType: file.type,
+                            },
+                          ]);
+                        }
+                      };
+                      reader.readAsDataURL(file);
+                    });
+                  }
+                }}
+              >
+                {/* Left: Plus Button */}
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
+                    className="w-[52px] h-[52px] rounded-full bg-[#212121] border border-[#3f3f46] flex items-center justify-center text-white hover:bg-[#2f2f2f] transition-colors shadow-sm"
+                  >
+                    <Plus size={28} strokeWidth={1.5} />
+                  </button>
+                  
+                  {isAttachmentMenuOpen && (
+                    <div key="attachment-menu" className="absolute bottom-full left-0 mb-2 w-48 bg-bg-surface border border-border-subtle rounded-xl shadow-xl py-1 z-10">
+                      <button
+                        key="btn-image"
+                        onClick={() => {
+                          setInput(
+                            (prev) =>
+                              prev +
+                              (prev.length > 0 ? " " : "") +
+                              "Gere uma imagem de ",
+                          );
+                          setIsAttachmentMenuOpen(false);
+                          textareaRef.current?.focus();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                      >
+                        <Image size={16} /> Criar imagens
+                      </button>
+                      <button
+                        key="btn-game"
+                        onClick={() => {
+                          setInput(
+                            (prev) =>
+                              prev +
+                              (prev.length > 0 ? " " : "") +
+                              "Crie um jogo completo de ",
+                          );
+                          setIsAttachmentMenuOpen(false);
+                          textareaRef.current?.focus();
+                        }}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                      >
+                        <Gamepad2 size={16} /> Criar jogos
+                      </button>
+                      <button
+                        key="btn-photos"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                      >
+                        <Image size={16} /> Fotos
+                      </button>
+                      <button
+                        key="btn-camera"
+                        onClick={() => cameraInputRef.current?.click()}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                      >
+                        <Camera size={16} /> Câmera
+                      </button>
+                      <button
+                        key="btn-file"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                      >
+                        <File size={16} /> Arquivos
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: Pill-shaped input */}
+                <div className="flex-1 relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm">
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -1857,72 +2008,46 @@ ${artifactsInstruction}`;
                     onChange={(e) => setInput(e.target.value)}
                     onPaste={handlePaste}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
+                      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
                         handleSend();
                       }
                     }}
-                    placeholder="Envie uma mensagem para o Dev AI..."
-                    className="w-full bg-transparent border-none text-text-primary text-[15px] py-2.5 px-2 focus:ring-0 resize-none min-h-[44px] max-h-[120px] placeholder:text-text-muted custom-scrollbar"
+                    placeholder="Pergunte ao Dev AI..."
+                    className="w-full bg-transparent border-none text-white text-[16px] py-3 px-4 focus:ring-0 resize-none min-h-[44px] max-h-[120px] placeholder:text-[#a1a1aa] custom-scrollbar"
                     rows={1}
                   />
-
-                  {input && (
-                    <button
-                      onClick={() => setInput("")}
-                      className="p-2 text-text-muted hover:text-text-primary transition-colors mb-1"
-                    >
-                      <X size={16} />
-                    </button>
-                  )}
-
-                  <div className="flex items-center gap-1 mb-1 shrink-0">
-                    <button
-                      onClick={() => {
-                        const newMode = isCodeMode ? "Dev AI" : "Dev AI Code";
-                        updateSetting("mode", newMode);
-                        if (messages.length > 0) {
-                          createNewChat();
-                        }
-                      }}
-                      className={cn(
-                        "flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl transition-colors text-sm font-medium mr-1",
-                        isCodeMode
-                          ? "text-red-400 bg-red-500/10 hover:bg-red-500/20"
-                          : "text-blue-400 bg-blue-500/10 hover:bg-blue-500/20",
-                      )}
-                    >
-                      {isCodeMode ? <Code2 size={16} /> : <Zap size={16} />}
-                      <span className="hidden sm:inline">
-                        {isCodeMode ? "Dev AI Code" : "Dev AI"}
-                      </span>
-                    </button>
+                  
+                  <div className="flex items-center gap-1 shrink-0 mb-0.5 pr-1">
                     <button
                       onClick={handleListen}
                       className={cn(
-                        "p-2 rounded-xl transition-colors",
-                        isListening
-                          ? "text-red-500 bg-red-500/10"
-                          : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover",
+                        "p-2 rounded-full transition-colors",
+                        isListening ? "text-red-500 bg-red-500/10" : "text-[#a1a1aa] hover:text-white"
                       )}
                     >
-                      {isListening ? <MicOff size={20} /> : <Mic size={20} />}
+                      {isListening ? <MicOff size={22} strokeWidth={1.5} /> : <Mic size={22} strokeWidth={1.5} />}
                     </button>
+                    
                     <button
                       onClick={isGenerating ? stopGeneration : handleSend}
-                      disabled={
-                        !isGenerating && isLoading || (!input.trim() && attachments.length === 0)
-                      }
+                      disabled={!isGenerating && isLoading || (!input.trim() && attachments.length === 0)}
                       className={cn(
-                        "w-9 h-9 rounded-xl flex items-center justify-center transition-all",
+                        "w-10 h-10 rounded-full flex items-center justify-center transition-all",
                         isGenerating
                           ? "bg-red-500 text-white hover:bg-red-600"
                           : input.trim() || attachments.length > 0
-                            ? "bg-primary text-white hover:bg-primary-hover"
-                            : "bg-bg-hover text-text-muted",
+                            ? "bg-white text-black hover:bg-gray-200"
+                            : "bg-white text-black hover:bg-gray-200"
                       )}
                     >
-                      {isGenerating ? <X size={18} /> : <Send size={18} className="ml-0.5" />}
+                      {isGenerating ? (
+                        <X size={20} strokeWidth={2} />
+                      ) : input.trim() || attachments.length > 0 ? (
+                        <ArrowUp size={20} strokeWidth={2} />
+                      ) : (
+                        <AudioLines size={20} strokeWidth={2} />
+                      )}
                     </button>
                   </div>
                 </div>
@@ -1942,6 +2067,7 @@ ${artifactsInstruction}`;
           hasCustomKey={hasCustomKey}
           onLogout={handleLogout}
           onClearHistory={clearAllChats}
+          logs={logs}
         />
       )}
 

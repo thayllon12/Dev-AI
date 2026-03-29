@@ -11,6 +11,7 @@ interface SettingsModalProps {
   hasCustomKey: boolean;
   onLogout: () => void;
   onClearHistory: () => void;
+  logs?: { type: string; msg: string; time: Date }[];
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -21,6 +22,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   hasCustomKey,
   onLogout,
   onClearHistory,
+  logs = [],
 }) => {
   const [height, setHeight] = useState(window.innerHeight * 0.8);
   const [isResizing, setIsResizing] = useState(false);
@@ -114,70 +116,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Sua chave personalizada está sendo usada para todas as requisições.
               </p>
             )}
-          </div>
-
-          {/* Visual Customization Section */}
-          <div>
-            <div className="flex items-center justify-between mb-4">
-              <label className="block text-sm font-bold text-text-secondary uppercase tracking-wider">
-                Personalização Visual
-              </label>
-            </div>
-
-            <div className="space-y-6">
-              <div>
-                <span className="text-xs text-text-muted mb-3 block uppercase tracking-wider font-bold">Tema do Sistema</span>
-                <div className="grid grid-cols-3 gap-3">
-                  {[
-                    { id: "light", label: "Claro", icon: <Sun size={16} /> },
-                    { id: "dark", label: "Escuro", icon: <Moon size={16} /> },
-                    { id: "auto", label: "Auto", icon: <Monitor size={16} /> },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => updateSetting("theme", t.id)}
-                      className={cn(
-                        "py-3 px-3 rounded-xl border flex items-center justify-center gap-2 transition-all font-bold text-sm",
-                        currentSettings.theme === t.id
-                          ? "bg-primary text-white border-primary shadow-lg shadow-primary/30 scale-[1.02]"
-                          : "bg-bg-surface border-border-subtle text-text-muted hover:bg-bg-surface-hover",
-                      )}
-                    >
-                      {t.icon}
-                      <span>{t.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <span className="text-xs text-text-muted mb-3 block uppercase tracking-wider font-bold">Cor de Destaque</span>
-                <div className="flex flex-wrap gap-2">
-                  {[
-                    { id: "auto", label: "Auto", color: "bg-gray-400" },
-                    { id: "blue", label: "Azul", color: "bg-blue-600" },
-                    { id: "red", label: "Vermelho", color: "bg-red-500" },
-                    { id: "black", label: "Preto", color: "bg-zinc-800" },
-                    { id: "green", label: "Verde", color: "bg-emerald-500" },
-                    { id: "purple", label: "Roxo", color: "bg-violet-500" },
-                  ].map((color) => (
-                    <button
-                      key={color.id}
-                      onClick={() => updateSetting("colorTheme", color.id)}
-                      className={cn(
-                        "flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all font-bold text-sm",
-                        (currentSettings.colorTheme || "auto") === color.id
-                          ? "bg-bg-surface-hover border-border-strong text-text-primary ring-2 ring-primary/20 shadow-md"
-                          : "bg-bg-surface border-border-subtle text-text-muted hover:bg-bg-surface-hover",
-                      )}
-                    >
-                      <div className={cn("w-4 h-4 rounded-full shadow-sm", color.color)} />
-                      <span>{color.label}</span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
           </div>
 
           {/* Toggles Section */}
@@ -274,6 +212,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {/* Data Management Section */}
           <div className="pt-8 space-y-4">
+            {currentSettings.isDevUnlocked && (
+              <div className="mb-8 border border-border-strong rounded-2xl overflow-hidden shadow-sm">
+                <div className="bg-bg-surface px-4 py-3 border-b border-border-strong flex items-center justify-between">
+                  <h4 className="font-bold text-sm text-text-primary flex items-center gap-2">
+                    <Code2 size={16} className="text-primary" />
+                    Console Dev / Logs
+                  </h4>
+                  <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
+                    Modo Desenvolvedor
+                  </span>
+                </div>
+                <div className="bg-[#0d0d0d] p-4 h-64 overflow-y-auto font-mono text-xs custom-scrollbar">
+                  {logs.length === 0 ? (
+                    <div className="text-text-muted/50 italic text-center mt-20">Nenhum log registrado.</div>
+                  ) : (
+                    logs.map((log, i) => (
+                      <div key={i} className={cn(
+                        "mb-1 pb-1 border-b border-white/5",
+                        log.type === 'error' ? "text-red-400" : log.type === 'warn' ? "text-yellow-400" : "text-green-400"
+                      )}>
+                        <span className="text-white/30 mr-2">[{log.time.toLocaleTimeString()}]</span>
+                        <span className="break-all">{log.msg}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+
             <button
               onClick={() => {
                 if (window.confirm("Tem certeza que deseja apagar TODO o histórico de conversas? Esta ação não pode ser desfeita.")) {

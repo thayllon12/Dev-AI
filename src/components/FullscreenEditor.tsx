@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import { X, Play, Maximize2, ChevronUp, ChevronDown, Download, Copy, CheckCheck, File, ExternalLink } from "lucide-react";
-import { cn } from "../lib/utils";
+import { cn, copyToClipboard } from "../lib/utils";
 
 export function FullscreenEditor({
   code,
@@ -15,8 +15,15 @@ export function FullscreenEditor({
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestionPos, setSuggestionPos] = useState({ top: 0, left: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const lineNumbersRef = useRef<HTMLDivElement>(null);
 
   const keywords = ["function", "const", "let", "var", "return", "if", "else", "for", "while", "import", "export", "class", "interface", "type", "async", "await"];
+
+  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
+    if (lineNumbersRef.current) {
+      lineNumbersRef.current.scrollTop = e.currentTarget.scrollTop;
+    }
+  };
 
   const handleCodeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
@@ -57,45 +64,51 @@ export function FullscreenEditor({
   const lineNumbers = currentCode.split("\n").map((_, i) => i + 1).join("\n");
 
   return (
-    <div className="fixed inset-0 bg-bg-main z-[100] flex flex-col animate-in fade-in duration-200">
-      <div className="flex items-center justify-between px-6 py-3 border-b border-border-strong bg-bg-surface">
-        <div className="flex items-center gap-4">
-          <div className="w-3 h-3 rounded-full bg-red-500" />
-          <div className="w-3 h-3 rounded-full bg-yellow-500" />
-          <div className="w-3 h-3 rounded-full bg-green-500" />
-          <span className="ml-4 text-sm font-mono text-text-muted uppercase tracking-widest">
+    <div className="fixed inset-0 bg-bg-main z-[9999] flex flex-col animate-in fade-in duration-200">
+      <div className="flex items-center justify-between px-3 sm:px-6 py-3 border-b border-border-strong bg-bg-surface flex-wrap gap-2">
+        <div className="flex items-center gap-2 sm:gap-4">
+          <div className="hidden sm:flex gap-2">
+            <div className="w-3 h-3 rounded-full bg-red-500" />
+            <div className="w-3 h-3 rounded-full bg-yellow-500" />
+            <div className="w-3 h-3 rounded-full bg-green-500" />
+          </div>
+          <span className="sm:ml-4 text-xs sm:text-sm font-mono text-text-muted uppercase tracking-widest truncate max-w-[150px] sm:max-w-none">
             {language || "editor"} — {currentCode.length} chars
           </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => {
-              navigator.clipboard.writeText(currentCode);
+              copyToClipboard(currentCode);
             }}
-            className="p-2.5 bg-bg-surface-hover text-text-muted hover:text-primary rounded-xl transition-all border border-border-strong shadow-sm"
+            className="p-2 sm:p-2.5 bg-bg-surface-hover text-text-muted hover:text-primary rounded-xl transition-all border border-border-strong shadow-sm"
             title="Copiar Tudo"
           >
-            <Copy size={20} />
+            <Copy size={18} className="sm:w-5 sm:h-5" />
           </button>
           <button
             onClick={onClose}
-            className="p-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all shadow-lg hover:scale-110 active:scale-95"
+            className="p-2 sm:p-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all shadow-lg hover:scale-110 active:scale-95"
             title="Fechar"
           >
-            <X size={24} />
+            <X size={20} className="sm:w-6 sm:h-6" />
           </button>
         </div>
       </div>
       
       <div className="flex-1 flex overflow-hidden font-mono text-sm">
-        <div className="w-12 bg-bg-surface border-r border-border-strong py-4 text-right pr-3 text-text-muted/30 select-none">
-          <pre className="whitespace-pre-wrap">{lineNumbers}</pre>
+        <div 
+          ref={lineNumbersRef}
+          className="w-12 bg-bg-surface border-r border-border-strong py-4 text-right pr-3 text-text-muted/30 select-none overflow-hidden"
+        >
+          <pre className="whitespace-pre-wrap leading-6 m-0">{lineNumbers}</pre>
         </div>
         <div className="flex-1 relative">
           <textarea
             ref={textareaRef}
             value={currentCode}
             onChange={handleCodeChange}
+            onScroll={handleScroll}
             className="w-full h-full bg-transparent text-text-primary p-4 outline-none resize-none leading-6 custom-scrollbar overflow-y-auto"
             spellCheck={false}
           />
