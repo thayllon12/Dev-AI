@@ -4,7 +4,8 @@ import { cn } from '../lib/utils';
 export function AILogo({ className, mode }: { className?: string, mode?: string }) {
   const isThinking = mode === "Thinking";
   const isNano = mode === "Nano Banana";
-  const glow = isThinking ? "rgba(239, 68, 68, 0.5)" : isNano ? "rgba(234, 179, 8, 0.5)" : "rgba(59, 130, 246, 0.5)";
+  const isStudent = mode === "Student";
+  const glow = isThinking ? "rgba(239, 68, 68, 0.5)" : isNano ? "rgba(234, 179, 8, 0.5)" : isStudent ? "rgba(34, 197, 94, 0.5)" : "rgba(59, 130, 246, 0.5)";
 
   return (
     <img

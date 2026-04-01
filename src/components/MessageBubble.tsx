@@ -184,6 +184,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                           language={language}
                           code={codeString}
                           userSettings={userSettings}
+                          fullMessageContent={msg.content}
                         />
                       );
                     }
@@ -264,7 +265,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           )}
 
           {/* Actions Menu */}
-          <div className="mt-2 flex items-center gap-2 w-full">
+          <div className={`mt-2 flex items-center gap-2 w-full ${isUser ? "justify-end" : "justify-start"}`}>
+            {!isUser && (
+              <button
+                onClick={toggleTTS}
+                className={`p-1.5 rounded-lg transition-all ${
+                  isPlaying ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
+                }`}
+                title={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
+              >
+                {isPlaying ? <VolumeX size={18} /> : <Volume2 size={18} />}
+              </button>
+            )}
             <div className="relative">
               <button
                 onClick={() => setShowActions(!showActions)}
@@ -358,18 +370,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                 </motion.div>
               )}
             </div>
-
-            {!isUser && (
-              <button
-                onClick={toggleTTS}
-                className={`p-1.5 rounded-lg transition-all ${
-                  isPlaying ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
-                }`}
-                title={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
-              >
-                {isPlaying ? <VolumeX size={18} /> : <Volume2 size={18} />}
-              </button>
-            )}
           </div>
         </div>
       </motion.div>

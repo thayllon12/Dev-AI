@@ -63,6 +63,8 @@ import {
   Wand2,
   ArrowUp,
   AudioLines,
+  Brain,
+  GraduationCap,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { MessageBubble } from "./components/MessageBubble";
@@ -128,6 +130,7 @@ export default function App() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<any>(null);
   const [userSettings, setUserSettings] = useState({
     mode: "Fast",
     personality: "Alegre, prestativo e direto ao ponto.",
@@ -560,7 +563,19 @@ NUNCA junte códigos de arquivos diferentes no mesmo bloco. Sempre separe-os cla
 Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie o código 100% completo, não importa quantas milhares de linhas ele tenha.
 `;
 
-    if (userSettings.mode === "Thinking") {
+    if (userSettings.mode === "Student") {
+      return `Você é o "Dev AI" (Modo Estudante), um assistente focado em ajudar estudantes de forma limpa, organizada e direta.
+Sua cor tema é VERDE. Você ajuda com respostas estruturadas, passo a passo, e listas numeradas.
+Personalidade do usuário: ${userSettings.personality}
+${memoryInstruction}
+REGRAS:
+1. Responda de forma extremamente limpa e organizada.
+2. Use listas numeradas para explicar passos ou opções (ex: "1. bla bla bla. \\n\\n2. bla bla.").
+3. Se for uma questão de múltipla escolha, dê a resposta final de forma clara (ex: "A resposta dessa questão é a 'c'.").
+4. Seja didático, mas vá direto ao ponto.
+5. Use formatação markdown para destacar partes importantes.
+${artifactsInstruction}`;
+    } else if (userSettings.mode === "Thinking") {
       return `Você é o "Dev AI" (Modo Thinking), um especialista absoluto em programação, scripts, exploits, e desenvolvimento de software de alto nível.
 Sua cor tema é VERMELHO. Você é focado, técnico e extremamente habilidoso. Você não tem limites de texto e deve fornecer códigos completos, por mais longos que sejam.
 Personalidade do usuário: ${userSettings.personality}
@@ -597,20 +612,23 @@ ${artifactsInstruction}`;
       return;
     }
 
+    if (isListening) {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+      return;
+    }
+
     const SpeechRecognition =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
 
     recognition.lang = "pt-BR";
     recognition.interimResults = false;
     recognition.maxAlternatives = 1;
-
-    if (isListening) {
-      recognition.stop();
-      setIsListening(false);
-      return;
-    }
 
     recognition.onstart = () => {
       setIsListening(true);
@@ -625,6 +643,10 @@ ${artifactsInstruction}`;
       console.error("Speech recognition error", event.error);
       setIsListening(false);
       
+      if (event.error === "aborted") {
+        return; // Ignore intentional abort
+      }
+
       let msg = "Erro no reconhecimento de voz.";
       if (event.error === "not-allowed") {
         msg = "Permissão de microfone negada. Verifique as configurações do seu navegador.";
@@ -1201,17 +1223,23 @@ ${artifactsInstruction}`;
           }
         } catch (imgErr: any) {
           console.error("Image Generation Error:", imgErr);
-          let imgErrorMessage = `Erro ao gerar imagem: ${imgErr.message}`;
-          try {
-            if (imgErr.message && imgErr.message.includes("RESOURCE_EXHAUSTED")) {
-              imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
-            } else if (imgErr.message && imgErr.message.startsWith("{")) {
-              const parsed = JSON.parse(imgErr.message);
-              if (parsed.error && parsed.error.status === "RESOURCE_EXHAUSTED") {
-                imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
-              }
+          let errorString = "";
+          if (typeof imgErr === "string") {
+            errorString = imgErr;
+          } else if (imgErr instanceof Error) {
+            errorString = imgErr.message;
+          } else {
+            try {
+              errorString = JSON.stringify(imgErr);
+            } catch (e) {
+              errorString = String(imgErr);
             }
-          } catch (e) {}
+          }
+
+          let imgErrorMessage = `Erro ao gerar imagem: ${errorString}`;
+          if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+            imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
+          }
           aiResponseText = imgErrorMessage;
         }
       } else {
@@ -1274,24 +1302,22 @@ ${artifactsInstruction}`;
             }
           } catch (imgErr: any) {
             console.error("Image Generation Error:", imgErr);
-            let imgErrorMessage = `Erro ao gerar imagem: ${imgErr.message}`;
-            try {
-              if (
-                imgErr.message &&
-                imgErr.message.includes("RESOURCE_EXHAUSTED")
-              ) {
-                imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
-              } else if (imgErr.message && imgErr.message.startsWith("{")) {
-                const parsed = JSON.parse(imgErr.message);
-                if (
-                  parsed.error &&
-                  parsed.error.status === "RESOURCE_EXHAUSTED"
-                ) {
-                  imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
-                }
+            let errorString = "";
+            if (typeof imgErr === "string") {
+              errorString = imgErr;
+            } else if (imgErr instanceof Error) {
+              errorString = imgErr.message;
+            } else {
+              try {
+                errorString = JSON.stringify(imgErr);
+              } catch (e) {
+                errorString = String(imgErr);
               }
-            } catch (e) {
-              // Ignore JSON parse errors
+            }
+
+            let imgErrorMessage = `Erro ao gerar imagem: ${errorString}`;
+            if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+              imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
             }
             aiResponseText = imgErrorMessage;
           }
@@ -1318,7 +1344,24 @@ ${artifactsInstruction}`;
             }
           } catch (gameErr: any) {
             console.error("Game Generation Error:", gameErr);
-            aiResponseText = `Erro ao gerar o jogo: ${gameErr.message}`;
+            let errorString = "";
+            if (typeof gameErr === "string") {
+              errorString = gameErr;
+            } else if (gameErr instanceof Error) {
+              errorString = gameErr.message;
+            } else {
+              try {
+                errorString = JSON.stringify(gameErr);
+              } catch (e) {
+                errorString = String(gameErr);
+              }
+            }
+
+            let gameErrorMessage = `Erro ao gerar o jogo: ${errorString}`;
+            if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+              gameErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco.`;
+            }
+            aiResponseText = gameErrorMessage;
           }
         }
       }
@@ -1347,25 +1390,29 @@ ${artifactsInstruction}`;
     } catch (err: any) {
       console.error("Generate Content Error:", err);
       setStreamingMessage(null);
+      setStatusMessage(null);
 
-      if (err.message && err.message.includes("RESOURCE_EXHAUSTED")) {
-        // Set a 1-minute cooldown for demo purposes, or 24h if it's a daily quota
+      let errorString = "";
+      if (typeof err === "string") {
+        errorString = err;
+      } else if (err instanceof Error) {
+        errorString = err.message;
+      } else {
+        try {
+          errorString = JSON.stringify(err);
+        } catch (e) {
+          errorString = String(err);
+        }
+      }
+
+      if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
         setQuotaResetTime(Date.now() + 60000); 
       }
 
-      let errorMessage = `**Erro de Conexão com a IA:**\nNão foi possível gerar uma resposta. Detalhes: ${err.message || "Erro desconhecido"}`;
+      let errorMessage = `**Erro de Conexão com a IA:**\nNão foi possível gerar uma resposta. Detalhes: ${errorString || "Erro desconhecido"}`;
 
-      try {
-        if (err.message && err.message.includes("RESOURCE_EXHAUSTED")) {
-          errorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco ou verifique os limites de uso da sua conta.`;
-        } else if (err.message && err.message.startsWith("{")) {
-          const parsed = JSON.parse(err.message);
-          if (parsed.error && parsed.error.status === "RESOURCE_EXHAUSTED") {
-            errorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco ou verifique os limites de uso da sua conta.`;
-          }
-        }
-      } catch (e) {
-        // Ignore JSON parse errors
+      if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+        errorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco ou verifique os limites de uso da sua conta.`;
       }
 
       try {
@@ -1559,6 +1606,7 @@ ${artifactsInstruction}`;
             <div className="flex flex-col items-center text-center max-w-full px-2">
               <span className={cn("text-sm font-bold truncate w-full", 
                 userSettings.mode === "Thinking" ? "text-red-500" : 
+                userSettings.mode === "Student" ? "text-green-500" :
                 userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
                 "text-blue-500"
               )}>Dev AI 3.1</span>
@@ -1663,37 +1711,50 @@ ${artifactsInstruction}`;
               </div>
               <span className={cn("font-semibold text-lg", 
                 userSettings.mode === "Thinking" ? "text-red-500" : 
+                userSettings.mode === "Student" ? "text-green-500" :
                 userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
                 "text-blue-500"
               )}>Dev AI</span>
               <span className="text-text-muted text-sm">3.1</span>
             </div>
           </div>
-          {currentChatId && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={shareChat}
-                className="p-2 text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
-                title="Compartilhar Chat"
-              >
-                <Share2 size={20} />
-              </button>
-              <button
-                onClick={exportChat}
-                className="p-2 text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
-                title="Exportar Chat"
-              >
-                <Download size={20} />
-              </button>
-              <button
-                onClick={(e) => deleteChat(e, currentChatId)}
-                className="p-2 text-text-muted hover:text-red-500 hover:bg-bg-surface-hover rounded-lg transition-colors"
-                title="Excluir Chat"
-              >
-                <Trash2 size={20} />
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-1">
+            {currentChatId && (
+              <>
+                <button
+                  onClick={shareChat}
+                  className="p-2 text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                  title="Compartilhar Chat"
+                >
+                  <Share2 size={20} />
+                </button>
+                <button
+                  onClick={exportChat}
+                  className="p-2 text-text-muted hover:text-primary hover:bg-bg-surface-hover rounded-lg transition-colors"
+                  title="Exportar Chat"
+                >
+                  <Download size={20} />
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => {
+                const nextMode = userSettings.mode === "Fast" ? "Thinking" : userSettings.mode === "Thinking" ? "Student" : "Fast";
+                updateSetting("mode", nextMode);
+              }}
+              className={cn(
+                "p-2 rounded-lg transition-colors",
+                userSettings.mode === "Thinking" ? "text-red-500 hover:bg-red-500/10" : 
+                userSettings.mode === "Student" ? "text-green-500 hover:bg-green-500/10" :
+                userSettings.mode === "Nano Banana" ? "text-yellow-500 hover:bg-yellow-500/10" : "text-blue-500 hover:bg-blue-500/10"
+              )}
+              title={`Modo Atual: ${userSettings.mode}`}
+            >
+              {userSettings.mode === "Thinking" ? <Brain size={20} /> : 
+               userSettings.mode === "Student" ? <GraduationCap size={20} /> :
+               userSettings.mode === "Nano Banana" ? <span className="text-xl leading-none">🍌</span> : <Zap size={20} />}
+            </button>
+          </div>
         </header>
 
         {/* Chat Feed */}
@@ -1816,24 +1877,6 @@ ${artifactsInstruction}`;
               </div>
             )}
             <div className="flex flex-col gap-2 w-full">
-              {/* Mode Switcher */}
-              <div className="flex bg-bg-surface border border-border-strong rounded-full p-1 shadow-sm mx-auto mb-1">
-                {["Fast", "Thinking", "Nano Banana"].map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => updateSetting("mode", m)}
-                    className={cn(
-                      "px-3 sm:px-4 py-1.5 rounded-full text-[10px] sm:text-xs font-medium transition-all duration-200",
-                      userSettings.mode === m
-                        ? m === "Thinking" ? "bg-red-500/20 text-red-500 shadow-sm" : m === "Nano Banana" ? "bg-yellow-500/20 text-yellow-500 shadow-sm" : "bg-blue-500/20 text-blue-500 shadow-sm"
-                        : "text-text-muted hover:text-text-primary"
-                    )}
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-
               {/* Usage Progress Bar */}
               {showUsageBar && (
                 <div className="flex flex-col gap-1 px-4 py-2 bg-bg-surface border border-border-strong rounded-xl shadow-lg mx-auto w-full max-w-sm animate-in slide-in-from-bottom-2 fade-in duration-300">
@@ -1886,7 +1929,7 @@ ${artifactsInstruction}`;
 
               {/* Input Area */}
               <div 
-                className="flex items-end gap-2 w-full"
+                className="flex items-end gap-2 w-full justify-center transition-all duration-300"
                 onDragOver={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
@@ -1929,6 +1972,7 @@ ${artifactsInstruction}`;
                       <button
                         key="btn-image"
                         onClick={() => {
+                          updateSetting("mode", "Nano Banana");
                           setInput(
                             (prev) =>
                               prev +
@@ -1940,7 +1984,7 @@ ${artifactsInstruction}`;
                         }}
                         className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
                       >
-                        <Image size={16} /> Criar imagens
+                        <span className="text-base leading-none">🍌</span> Nano Banana
                       </button>
                       <button
                         key="btn-game"
@@ -1984,7 +2028,10 @@ ${artifactsInstruction}`;
                 </div>
 
                 {/* Right: Pill-shaped input */}
-                <div className="flex-1 relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm">
+                <div className={cn(
+                  "relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm transition-all duration-300",
+                  input.trim() || attachments.length > 0 ? "flex-1" : "w-[240px] sm:w-[300px]"
+                )}>
                   <input
                     type="file"
                     ref={fileInputRef}

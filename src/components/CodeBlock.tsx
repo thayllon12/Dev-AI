@@ -20,10 +20,12 @@ export function CodeBlock({
   language,
   code,
   userSettings,
+  fullMessageContent,
 }: {
   language: string;
   code: string;
   userSettings: any;
+  fullMessageContent?: string;
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -44,6 +46,7 @@ export function CodeBlock({
             code={code}
             language={language}
             onClose={() => setIsFullscreen(false)}
+            fullMessageContent={fullMessageContent}
           />
         )}
         <div
@@ -79,6 +82,7 @@ export function CodeBlock({
           code={code}
           language={language}
           onClose={() => setIsFullscreen(false)}
+          fullMessageContent={fullMessageContent}
         />
       )}
       <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong">
