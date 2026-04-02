@@ -510,16 +510,29 @@ export default function App() {
     const provider = new GoogleAuthProvider();
     try {
       await signInWithPopup(auth, provider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login error", error);
+      if (error.code === 'auth/unauthorized-domain') {
+        toast.error("Domínio não autorizado!", {
+          description: "Adicione o domínio do seu GitHub Pages (ex: seunome.github.io) na aba 'Authorized domains' no painel do Firebase Authentication.",
+          duration: 10000,
+        });
+      } else {
+        toast.error("Erro ao fazer login", {
+          description: error.message,
+        });
+      }
     }
   };
 
   const handleLoginGuest = async () => {
     try {
       await signInAnonymously(auth);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Guest login error", error);
+      toast.error("Erro ao entrar como visitante", {
+        description: error.message,
+      });
     }
   };
 
@@ -1504,26 +1517,36 @@ ${artifactsInstruction}`;
 
   if (!isAuthReady) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-bg-main text-text-primary">
-        <div className="w-16 h-16 rounded-full flex items-center justify-center mb-6 shadow-2xl bg-primary/20 text-primary animate-pulse">
-          <Zap size={32} />
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            className="w-2 h-2 bg-primary rounded-full animate-bounce"
-            style={{ animationDelay: "0ms" }}
-          />
-          <div
-            className="w-2 h-2 bg-primary rounded-full animate-bounce"
-            style={{ animationDelay: "150ms" }}
-          />
-          <div
-            className="w-2 h-2 bg-primary rounded-full animate-bounce"
-            style={{ animationDelay: "300ms" }}
-          />
-        </div>
-        <div className="mt-4 text-sm text-text-muted font-medium tracking-widest uppercase">
-          Iniciando Dev AI
+      <div className="h-screen flex flex-col items-center justify-center bg-bg-main text-text-primary relative overflow-hidden">
+        {/* Background glow */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-primary/20 rounded-full blur-[100px]" />
+        
+        <div className="relative z-10 flex flex-col items-center">
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-6 shadow-2xl bg-primary/20 text-primary border border-primary/30 animate-pulse">
+            <Zap size={40} className="text-primary" />
+          </div>
+          
+          <h1 className="text-3xl font-black text-center mb-2 tracking-tight">
+            Dev AI
+          </h1>
+          
+          <div className="flex items-center gap-2 mt-6">
+            <div
+              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              style={{ animationDelay: "0ms" }}
+            />
+            <div
+              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              style={{ animationDelay: "150ms" }}
+            />
+            <div
+              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              style={{ animationDelay: "300ms" }}
+            />
+          </div>
+          <div className="mt-4 text-sm text-text-muted font-medium tracking-widest uppercase">
+            Iniciando Sistema
+          </div>
         </div>
       </div>
     );
