@@ -226,7 +226,12 @@ export default function App() {
       setHasCustomKey(true);
     }
   };
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 768;
+    }
+    return false;
+  });
   const [quotaResetTime, setQuotaResetTime] = useState<number | null>(null);
   const [countdown, setCountdown] = useState<string>("");
 
@@ -929,7 +934,9 @@ ${artifactsInstruction}`;
   const createNewChat = () => {
     setCurrentChatId(null);
     setInput("");
-    setIsSidebarOpen(false);
+    if (window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
   };
 
   const handleEdit = async (msg: any, newContent: string) => {
@@ -1619,9 +1626,10 @@ ${artifactsInstruction}`;
 
       {/* Sidebar */}
       <aside
-        className={`fixed md:relative z-50 h-full transition-all duration-300 bg-bg-sidebar flex flex-col ${isSidebarOpen ? "w-64 left-0" : "w-0 -left-full md:w-64 md:left-0"} overflow-hidden`}
+        className={`fixed md:relative z-50 h-full transition-all duration-300 bg-bg-sidebar flex flex-col shrink-0 ${isSidebarOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full"} overflow-hidden border-r border-border-subtle`}
       >
-        <div className="p-4 flex flex-col items-center gap-4">
+        <div className="w-64 flex flex-col h-full">
+          <div className="p-4 flex flex-col items-center gap-4">
           <div className="flex flex-col items-center gap-2">
             <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center overflow-hidden border-2 border-primary/20 shadow-xl">
               <AILogo mode={userSettings.mode} />
@@ -1675,7 +1683,9 @@ ${artifactsInstruction}`;
                 key={chat.id}
                 onClick={() => {
                   setCurrentChatId(chat.id);
-                  setIsSidebarOpen(false);
+                  if (window.innerWidth < 768) {
+                    setIsSidebarOpen(false);
+                  }
                 }}
                 className={`group flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all ${currentChatId === chat.id ? "bg-bg-surface-hover text-text-primary" : "text-text-secondary hover:bg-bg-surface"}`}
               >
@@ -1713,6 +1723,7 @@ ${artifactsInstruction}`;
             Sair
           </button>
         </div>
+        </div>
       </aside>
 
       {/* Main Content */}
@@ -1720,8 +1731,8 @@ ${artifactsInstruction}`;
         <header className="flex items-center justify-between px-4 h-14 z-30">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setIsSidebarOpen(true)}
-              className="p-2 text-text-muted md:hidden hover:bg-bg-surface-hover hover:text-text-primary rounded-lg transition-colors"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+              className="p-2 text-text-muted hover:bg-bg-surface-hover hover:text-text-primary rounded-lg transition-colors"
             >
               <Menu size={20} />
             </button>
