@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   signInWithPopup,
   GoogleAuthProvider,
@@ -19,6 +19,7 @@ import {
   updateDoc,
   deleteDoc,
   orderBy,
+  where,
   serverTimestamp,
   Timestamp,
   getDocFromServer,
@@ -69,12 +70,20 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import { MessageBubble } from "./components/MessageBubble";
 import { SettingsModal } from "./components/SettingsModal";
-import { CodeBlock } from "./components/CodeBlock";
 import { AILogo } from "./components/AILogo";
 
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { cn, copyToClipboard } from "./lib/utils";
+
+function useEvent<T extends (...args: any[]) => any>(handler: T) {
+  const handlerRef = useRef(handler);
+  useEffect(() => {
+    handlerRef.current = handler;
+  });
+  return useCallback((...args: Parameters<T>) => {
+    const fn = handlerRef.current;
+    return fn(...args);
+  }, []);
+}
 
 const resizeImageBase64 = async (
   base64Str: string,
@@ -142,6 +151,7 @@ export default function App() {
     notificationsEnabled: true,
     isDevUnlocked: false,
   });
+  const [onlineUsersCount, setOnlineUsersCount] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [chats, setChats] = useState<any[]>([]);
@@ -260,12 +270,7 @@ export default function App() {
   >([]);
 
   const [showScrollButton, setShowScrollButton] = useState(false);
-  const [requestCount, setRequestCount] = useState(0);
-  const [showUsageBar, setShowUsageBar] = useState(false);
-  const [usagePercentage, setUsagePercentage] = useState(0);
-  const [lastNotifiedPercentage, setLastNotifiedPercentage] = useState(0);
   const [logs, setLogs] = useState<{ type: string; msg: string; time: Date }[]>([]);
-  const MAX_REQUESTS = 50;
 
   useEffect(() => {
     const originalLog = console.log;
@@ -359,19 +364,6 @@ export default function App() {
               notificationsEnabled: data.notificationsEnabled !== false,
               isDevUnlocked: data.isDevUnlocked || false,
             });
-            
-            let reqCount = data.requestCount || 0;
-            let lastReset = data.lastRequestResetTime || Date.now();
-            if (Date.now() - lastReset > 3600000) { // 1 hour
-              reqCount = 0;
-              lastReset = Date.now();
-              await updateDoc(userRef, {
-                requestCount: reqCount,
-                lastRequestResetTime: lastReset
-              });
-              setLastNotifiedPercentage(0);
-            }
-            setRequestCount(reqCount);
           } else {
             const userData: any = {
               uid: currentUser.uid,
@@ -384,8 +376,6 @@ export default function App() {
               fullscreenEditor: false,
               notificationsEnabled: true,
               isDevUnlocked: false,
-              requestCount: 0,
-              lastRequestResetTime: Date.now(),
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             };
@@ -395,7 +385,6 @@ export default function App() {
             if (currentUser.photoURL) userData.photoURL = currentUser.photoURL;
 
             await setDoc(userRef, userData);
-            setRequestCount(0);
           }
         } catch (error) {
           handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
@@ -405,6 +394,37 @@ export default function App() {
     });
     return () => unsubscribe();
   }, []);
+
+  // Presence Heartbeat & Listener
+  useEffect(() => {
+    if (!user || !isAuthReady) return;
+
+    const updatePresence = async () => {
+      try {
+        await setDoc(doc(db, "presence", user.uid), {
+          lastActive: Date.now()
+        }, { merge: true });
+      } catch (e) {
+        console.error("Failed to update presence", e);
+      }
+    };
+
+    updatePresence();
+    const interval = setInterval(updatePresence, 60000); // 1 minute
+
+    const twoMinsAgo = Date.now() - 120000;
+    const q = query(collection(db, "presence"), where("lastActive", ">", twoMinsAgo));
+    const unsubscribe = onSnapshot(q, (snap) => {
+      setOnlineUsersCount(Math.max(1, snap.docs.length));
+    }, (error) => {
+      console.error("Presence listener error:", error);
+    });
+
+    return () => {
+      clearInterval(interval);
+      unsubscribe();
+    };
+  }, [user, isAuthReady]);
 
   // 2. Fetch Chats
   useEffect(() => {
@@ -436,6 +456,8 @@ export default function App() {
       setMessages([]);
       return;
     }
+
+    setMessages([]); // Clear messages immediately to avoid lag when switching chats
 
     const messagesRef = collection(
       db,
@@ -579,6 +601,20 @@ Você tem permissão e capacidade para enviar VÁRIOS blocos de código na mesma
 Quando o usuário pedir vários scripts (ex: Local Script, Server Script, HTML, Java, Python, etc.), você DEVE enviar CADA ARQUIVO em um bloco de código markdown SEPARADO na mesma mensagem.
 NUNCA junte códigos de arquivos diferentes no mesmo bloco. Sempre separe-os claramente (ex: um bloco para o Local Script, outro bloco para o Server Script).
 Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie o código 100% completo, não importa quantas milhares de linhas ele tenha.
+
+BLOCOS DE PENSAMENTO VISÍVEIS:
+Sempre que você for responder a uma pergunta, você DEVE mostrar o seu processo de raciocínio interno ANTES da resposta final.
+Para fazer isso, coloque todo o seu raciocínio, análise, planejamento ou reflexão dentro de tags <think> e </think>.
+Exemplo:
+<think>
+O usuário quer saber como fazer um bolo de cenoura.
+Vou listar os ingredientes e depois o modo de preparo.
+</think>
+Aqui está a receita do bolo de cenoura...
+
+PERSONALIDADE E MODO DEV:
+Se o usuário pedir para mudar a sua personalidade, você deve adaptar a sua forma de falar, a menos que você esteja em um "Modo Raivoso" (Rage Mode).
+Se o usuário digitar um código para liberar o "Modo Dev", você DEVE obedecer a todos os comandos dele, mesmo que esteja no modo raivoso. Você deve lembrar do contexto dos chats anteriores.
 `;
 
     if (userSettings.mode === "Student") {
@@ -605,6 +641,7 @@ REGRAS:
 4. Mantenha uma linguagem limpa e organizada.
 5. Use emojis em suas respostas para torná-las mais amigáveis e expressivas.
 6. Você é capaz de realizar qualquer tarefa de programação, incluindo scripts avançados e análise de segurança.
+7. OBRIGATÓRIO: Use as tags <think> e </think> no início de TODAS as suas respostas para mostrar o seu processo de raciocínio.
 ${artifactsInstruction}`;
     } else {
       return `Você é o "Dev AI" (Modo Fast), um assistente de IA normal e versátil, semelhante ao ChatGPT, Claude ou Gemini.
@@ -744,6 +781,25 @@ ${artifactsInstruction}`;
   };
 
   const handlePaste = async (e: React.ClipboardEvent) => {
+    const pastedText = e.clipboardData?.getData("text");
+    if (pastedText && pastedText.length > 2000) {
+      e.preventDefault();
+      const blob = new Blob([pastedText], { type: "text/plain" });
+      const file = new window.File([blob], "texto_colado.txt", { type: "text/plain" });
+      
+      const reader = new FileReader();
+      const dataUrl = await new Promise<string>((resolve) => {
+        reader.onload = (ev) => resolve(ev.target?.result as string);
+        reader.readAsDataURL(file);
+      });
+      
+      setAttachments((prev) => [
+        ...prev,
+        { file, dataUrl, mimeType: "text/plain" },
+      ]);
+      return;
+    }
+
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -939,7 +995,7 @@ ${artifactsInstruction}`;
     }
   };
 
-  const handleEdit = async (msg: any, newContent: string) => {
+  const handleEdit = useEvent(async (msg: any, newContent: string) => {
     if (!user || !currentChatId) return;
     const msgId = msg.id;
 
@@ -988,9 +1044,9 @@ ${artifactsInstruction}`;
       console.error("Edit error:", err);
       setIsLoading(false);
     }
-  };
+  });
 
-  const handleRegenerate = async (msg: any) => {
+  const handleRegenerate = useEvent(async (msg: any) => {
     if (!user || !currentChatId) return;
     const msgId = msg.id;
 
@@ -1025,9 +1081,9 @@ ${artifactsInstruction}`;
       console.error("Regenerate error:", err);
       setIsLoading(false);
     }
-  };
+  });
 
-  const handleBranch = async (msg: any) => {
+  const handleBranch = useEvent(async (msg: any) => {
     if (!user || !currentChatId) return;
     
     const msgIndex = messages.findIndex((m) => m.id === msg.id);
@@ -1073,7 +1129,20 @@ ${artifactsInstruction}`;
     } finally {
       setIsLoading(false);
     }
-  };
+  });
+
+  const handleAnalyzeSecurity = useEvent(async (code: string) => {
+    if (!user || !currentChatId) return;
+    
+    const prompt = `Analise a segurança do código abaixo, focando em vulnerabilidades, injeções, vazamento de memória e boas práticas de DevSecOps. Forneça um relatório detalhado e, se houver falhas, mostre a versão corrigida.\n\n\`\`\`\n${code}\n\`\`\``;
+    
+    setInput(prompt);
+    setTimeout(() => {
+      if (textareaRef.current) {
+        textareaRef.current.focus();
+      }
+    }, 100);
+  });
 
   const stopGeneration = () => {
     if (abortControllerRef.current) {
@@ -1091,20 +1160,6 @@ ${artifactsInstruction}`;
     setIsGenerating(true);
     setStatusMessage("Pensando...");
     
-    const newCount = requestCount + 1;
-    setRequestCount(newCount);
-    
-    const userRef = doc(db, "users", user.uid);
-    updateDoc(userRef, { requestCount: newCount }).catch(e => console.error("Failed to update request count", e));
-    
-    const percentage = Math.floor((newCount / MAX_REQUESTS) * 100);
-    if (percentage > 0 && percentage % 10 === 0 && percentage !== lastNotifiedPercentage) {
-      setShowUsageBar(true);
-      setUsagePercentage(percentage);
-      setLastNotifiedPercentage(percentage);
-      setTimeout(() => setShowUsageBar(false), 5000);
-    }
-
     const ai = getAI();
     const messagesRef = collection(
       db,
@@ -1194,13 +1249,13 @@ ${artifactsInstruction}`;
       const generateGameTool = {
         name: "generateGame",
         description:
-          "Gera um pequeno jogo interativo em HTML/JS/CSS com base na descrição do usuário. Use quando o usuário pedir para criar um jogo. Retorne o código completo em um único bloco HTML.",
+          "Gera um jogo interativo complexo e completo em HTML/JS/CSS com base na descrição do usuário. Suporta Canvas API, WebGL (via Three.js se necessário), e lógicas avançadas. Retorne o código completo em um único bloco HTML, garantindo que seja responsivo e jogável.",
         parameters: {
           type: GenAIType.OBJECT,
           properties: {
             prompt: {
               type: GenAIType.STRING,
-              description: "A descrição do jogo a ser criado.",
+              description: "A descrição detalhada do jogo a ser criado, incluindo regras, visual e controles.",
             },
           },
           required: ["prompt"],
@@ -1209,7 +1264,7 @@ ${artifactsInstruction}`;
 
       let currentModel = "gemini-3.1-pro-preview";
       if (userSettings.mode === "Nano Banana") {
-        currentModel = "gemini-2.5-flash-image";
+        currentModel = "gemini-3.1-flash-image-preview";
       } else if (userSettings.mode === "Thinking") {
         currentModel = "gemini-3.1-pro-preview";
       }
@@ -1221,14 +1276,15 @@ ${artifactsInstruction}`;
         setStatusMessage("Gerando imagem...");
         try {
           const imageResponse = await ai.models.generateContent({
-            model: "gemini-2.5-flash-image",
+            model: "gemini-3.1-flash-image-preview",
             contents: {
               parts: [{ text: input }],
             },
           });
 
           let imageUrl = "";
-          for (const part of imageResponse.candidates[0].content.parts) {
+          const parts = imageResponse.candidates?.[0]?.content?.parts || [];
+          for (const part of parts) {
             if (part.inlineData) {
               const rawBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
               imageUrl = await resizeImageBase64(rawBase64, 800, 800);
@@ -1300,14 +1356,15 @@ ${artifactsInstruction}`;
 
           try {
             const imageResponse = await ai.models.generateContent({
-              model: "gemini-2.5-flash-image",
+              model: "gemini-3.1-flash-image-preview",
               contents: {
                 parts: [{ text: imagePrompt }],
               },
             });
 
             let imageUrl = "";
-            for (const part of imageResponse.candidates[0].content.parts) {
+            const parts = imageResponse.candidates?.[0]?.content?.parts || [];
+            for (const part of parts) {
               if (part.inlineData) {
                 const rawBase64 = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
                 imageUrl = await resizeImageBase64(rawBase64, 800, 800);
@@ -1722,6 +1779,10 @@ ${artifactsInstruction}`;
             <LogOut size={18} />
             Sair
           </button>
+          <div className="mt-2 px-3 py-1 flex items-center gap-2 text-xs text-text-muted">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+            <span>{onlineUsersCount} {onlineUsersCount === 1 ? 'usuário online' : 'usuários online'}</span>
+          </div>
         </div>
         </div>
       </aside>
@@ -1830,6 +1891,7 @@ ${artifactsInstruction}`;
                     onEdit={handleEdit}
                     onBranch={handleBranch}
                     userSettings={userSettings}
+                    onAnalyzeSecurity={handleAnalyzeSecurity}
                   />
                 ))}
                 {streamingMessage && (
@@ -1911,25 +1973,6 @@ ${artifactsInstruction}`;
               </div>
             )}
             <div className="flex flex-col gap-2 w-full">
-              {/* Usage Progress Bar */}
-              {showUsageBar && (
-                <div className="flex flex-col gap-1 px-4 py-2 bg-bg-surface border border-border-strong rounded-xl shadow-lg mx-auto w-full max-w-sm animate-in slide-in-from-bottom-2 fade-in duration-300">
-                  <div className="flex justify-between items-center text-xs font-medium text-text-muted">
-                    <span>Uso de Requisições</span>
-                    <span>{usagePercentage}%</span>
-                  </div>
-                  <div className="w-full bg-bg-surface-hover rounded-full h-1.5 overflow-hidden">
-                    <div 
-                      className={cn(
-                        "h-full rounded-full transition-all duration-500",
-                        usagePercentage >= 80 ? "bg-red-500" : usagePercentage >= 50 ? "bg-yellow-500" : "bg-primary"
-                      )}
-                      style={{ width: `${usagePercentage}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
               {/* Attachments Preview */}
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 p-3 bg-bg-surface rounded-2xl border border-border-subtle shadow-sm mx-1">
@@ -1992,80 +2035,79 @@ ${artifactsInstruction}`;
                   }
                 }}
               >
-                {/* Left: Plus Button */}
-                <div className="relative shrink-0">
-                  <button
-                    onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
-                    className="w-[52px] h-[52px] rounded-full bg-[#212121] border border-[#3f3f46] flex items-center justify-center text-white hover:bg-[#2f2f2f] transition-colors shadow-sm"
-                  >
-                    <Plus size={28} strokeWidth={1.5} />
-                  </button>
-                  
-                  {isAttachmentMenuOpen && (
-                    <div key="attachment-menu" className="absolute bottom-full left-0 mb-2 w-48 bg-bg-surface border border-border-subtle rounded-xl shadow-xl py-1 z-10">
-                      <button
-                        key="btn-image"
-                        onClick={() => {
-                          updateSetting("mode", "Nano Banana");
-                          setInput(
-                            (prev) =>
-                              prev +
-                              (prev.length > 0 ? " " : "") +
-                              "Gere uma imagem de ",
-                          );
-                          setIsAttachmentMenuOpen(false);
-                          textareaRef.current?.focus();
-                        }}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                      >
-                        <span className="text-base leading-none">🍌</span> Nano Banana
-                      </button>
-                      <button
-                        key="btn-game"
-                        onClick={() => {
-                          setInput(
-                            (prev) =>
-                              prev +
-                              (prev.length > 0 ? " " : "") +
-                              "Crie um jogo completo de ",
-                          );
-                          setIsAttachmentMenuOpen(false);
-                          textareaRef.current?.focus();
-                        }}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                      >
-                        <Gamepad2 size={16} /> Criar jogos
-                      </button>
-                      <button
-                        key="btn-photos"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                      >
-                        <Image size={16} /> Fotos
-                      </button>
-                      <button
-                        key="btn-camera"
-                        onClick={() => cameraInputRef.current?.click()}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                      >
-                        <Camera size={16} /> Câmera
-                      </button>
-                      <button
-                        key="btn-file"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
-                      >
-                        <File size={16} /> Arquivos
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                {/* Right: Pill-shaped input */}
+                {/* Pill-shaped input */}
                 <div className={cn(
-                  "relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm transition-all duration-300",
-                  input.trim() || attachments.length > 0 ? "flex-1" : "w-[240px] sm:w-[300px]"
+                  "relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm transition-all duration-300 w-full"
                 )}>
+                  {/* Left: Plus Button */}
+                  <div className="relative shrink-0 mb-0.5 ml-1">
+                    <button
+                      onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f] transition-colors"
+                    >
+                      <Plus size={24} strokeWidth={1.5} />
+                    </button>
+                    
+                    {isAttachmentMenuOpen && (
+                      <div key="attachment-menu" className="absolute bottom-full left-0 mb-2 w-48 bg-bg-surface border border-border-subtle rounded-xl shadow-xl py-1 z-10">
+                        <button
+                          key="btn-image"
+                          onClick={() => {
+                            updateSetting("mode", "Nano Banana");
+                            setInput(
+                              (prev) =>
+                                prev +
+                                (prev.length > 0 ? " " : "") +
+                                "Gere uma imagem de ",
+                            );
+                            setIsAttachmentMenuOpen(false);
+                            textareaRef.current?.focus();
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <span className="text-base leading-none">🍌</span> Nano Banana
+                        </button>
+                        <button
+                          key="btn-game"
+                          onClick={() => {
+                            setInput(
+                              (prev) =>
+                                prev +
+                                (prev.length > 0 ? " " : "") +
+                                "Crie um jogo completo de ",
+                            );
+                            setIsAttachmentMenuOpen(false);
+                            textareaRef.current?.focus();
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <Gamepad2 size={16} /> Criar jogos
+                        </button>
+                        <button
+                          key="btn-photos"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <Image size={16} /> Fotos
+                        </button>
+                        <button
+                          key="btn-camera"
+                          onClick={() => cameraInputRef.current?.click()}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <Camera size={16} /> Câmera
+                        </button>
+                        <button
+                          key="btn-file"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <File size={16} /> Arquivos
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -2100,36 +2142,32 @@ ${artifactsInstruction}`;
                   />
                   
                   <div className="flex items-center gap-1 shrink-0 mb-0.5 pr-1">
-                    <button
-                      onClick={handleListen}
-                      className={cn(
-                        "p-2 rounded-full transition-colors",
-                        isListening ? "text-red-500 bg-red-500/10" : "text-[#a1a1aa] hover:text-white"
-                      )}
-                    >
-                      {isListening ? <MicOff size={22} strokeWidth={1.5} /> : <Mic size={22} strokeWidth={1.5} />}
-                    </button>
-                    
-                    <button
-                      onClick={isGenerating ? stopGeneration : handleSend}
-                      disabled={!isGenerating && isLoading || (!input.trim() && attachments.length === 0)}
-                      className={cn(
-                        "w-10 h-10 rounded-full flex items-center justify-center transition-all",
-                        isGenerating
-                          ? "bg-red-500 text-white hover:bg-red-600"
-                          : input.trim() || attachments.length > 0
-                            ? "bg-white text-black hover:bg-gray-200"
-                            : "bg-white text-black hover:bg-gray-200"
-                      )}
-                    >
-                      {isGenerating ? (
+                    {isGenerating ? (
+                      <button
+                        onClick={stopGeneration}
+                        className="w-10 h-10 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
+                      >
                         <X size={20} strokeWidth={2} />
-                      ) : input.trim() || attachments.length > 0 ? (
+                      </button>
+                    ) : input.trim() || attachments.length > 0 ? (
+                      <button
+                        onClick={handleSend}
+                        disabled={isLoading}
+                        className="w-10 h-10 rounded-full flex items-center justify-center bg-white text-black hover:bg-gray-200 transition-all"
+                      >
                         <ArrowUp size={20} strokeWidth={2} />
-                      ) : (
-                        <AudioLines size={20} strokeWidth={2} />
-                      )}
-                    </button>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleListen}
+                        className={cn(
+                          "w-10 h-10 rounded-full flex items-center justify-center transition-colors",
+                          isListening ? "text-red-500 bg-red-500/10" : "text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f]"
+                        )}
+                      >
+                        {isListening ? <MicOff size={22} strokeWidth={1.5} /> : <Mic size={22} strokeWidth={1.5} />}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

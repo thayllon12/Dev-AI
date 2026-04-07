@@ -9,6 +9,7 @@ import {
   Download,
   File,
   ExternalLink,
+  ShieldAlert,
 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
@@ -21,11 +22,13 @@ export function CodeBlock({
   code,
   userSettings,
   fullMessageContent,
+  onAnalyzeSecurity,
 }: {
   language: string;
   code: string;
   userSettings: any;
   fullMessageContent?: string;
+  onAnalyzeSecurity?: (code: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -36,6 +39,36 @@ export function CodeBlock({
     await copyToClipboard(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownload = async () => {
+    try {
+      if ('showSaveFilePicker' in window) {
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: `code_${Date.now()}.${language || "txt"}`,
+          types: [
+            {
+              description: 'Code file',
+              accept: { 'text/plain': [`.${language || "txt"}`] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(code);
+        await writable.close();
+      } else {
+        const filename = prompt("Nome do arquivo:", `code_${Date.now()}.${language || "txt"}`);
+        if (!filename) return;
+        const blob = new Blob([code], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+      }
+    } catch (err) {
+      console.error("Failed to save file", err);
+    }
   };
 
   if (userSettings?.fullscreenEditor) {
@@ -64,7 +97,11 @@ export function CodeBlock({
               Clique para abrir o código
             </div>
           </div>
-          <button className="p-2 text-text-muted hover:text-primary transition-colors">
+          <button 
+            className="p-2 text-text-muted hover:text-primary transition-colors"
+            aria-label="Abrir código em tela cheia"
+            title="Abrir código em tela cheia"
+          >
             <ExternalLink size={18} />
           </button>
         </div>
@@ -117,15 +154,18 @@ export function CodeBlock({
               {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               {isExpanded ? "Minimizar" : "Expandir"}
             </button>
+            {onAnalyzeSecurity && (
+              <button
+                onClick={() => onAnalyzeSecurity(code)}
+                className="flex items-center gap-1.5 hover:text-red-400 transition-colors text-red-500 font-bold"
+                title="Analisar Segurança"
+              >
+                <ShieldAlert size={14} />
+                Analisar
+              </button>
+            )}
             <button
-              onClick={() => {
-                const blob = new Blob([code], { type: "text/plain" });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement("a");
-                a.href = url;
-                a.download = `code_${Date.now()}.${language || "txt"}`;
-                a.click();
-              }}
+              onClick={handleDownload}
               className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
             >
               <Download size={14} />

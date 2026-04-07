@@ -2,10 +2,10 @@ import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
-import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal } from "lucide-react";
+import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
 import { AILogo } from "./AILogo";
-import { copyToClipboard } from "../lib/utils";
+import { copyToClipboard, guessLanguage } from "../lib/utils";
 
 interface MessageBubbleProps {
   msg: any;
@@ -16,9 +16,10 @@ interface MessageBubbleProps {
   onEdit?: (msg: any, newContent: string) => void;
   onBranch?: (msg: any) => void;
   userSettings: any;
+  onAnalyzeSecurity?: (code: string) => void;
 }
 
-export const MessageBubble: React.FC<MessageBubbleProps> = ({
+export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   msg,
   isCodeMode,
   themeColor,
@@ -27,6 +28,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   onEdit,
   onBranch,
   userSettings,
+  onAnalyzeSecurity,
 }) => {
   const isUser = msg.role === "user";
   const [copied, setCopied] = useState(false);
@@ -35,6 +37,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
   const [showActions, setShowActions] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSelectText, setShowSelectText] = useState(false);
+  const [isThinkExpanded, setIsThinkExpanded] = useState(false);
+  const [isThinkVisible, setIsThinkVisible] = useState(true);
 
   useEffect(() => {
     return () => {
@@ -88,6 +92,23 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
     }
   };
 
+  let thinkContent = "";
+  let mainContent = msg.content || "";
+
+  if (!isUser) {
+    const thinkStart = mainContent.indexOf("<think>");
+    if (thinkStart !== -1) {
+      const thinkEnd = mainContent.indexOf("</think>");
+      if (thinkEnd !== -1) {
+        thinkContent = mainContent.substring(thinkStart + 7, thinkEnd).trim();
+        mainContent = mainContent.substring(0, thinkStart) + mainContent.substring(thinkEnd + 8);
+      } else {
+        thinkContent = mainContent.substring(thinkStart + 7).trim();
+        mainContent = mainContent.substring(0, thinkStart);
+      }
+    }
+  }
+
   return (
     <>
       {showSelectText && (
@@ -95,7 +116,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
           <div className="bg-bg-surface w-full max-w-3xl h-[80vh] rounded-2xl flex flex-col overflow-hidden shadow-2xl border border-border-strong">
             <div className="flex justify-between items-center p-4 border-b border-border-subtle bg-bg-surface-hover">
               <h3 className="font-bold text-text-primary">Selecionar Texto</h3>
-              <button onClick={() => setShowSelectText(false)} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+              <button 
+                onClick={() => setShowSelectText(false)} 
+                className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                aria-label="Fechar seleção de texto"
+                title="Fechar"
+              >
                 <X size={20} />
               </button>
             </div>
@@ -169,78 +195,115 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
               </div>
             </div>
           ) : (
-            <div className="markdown-body">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                components={{
-                  code({ node, inline, className, children, ...props }: any) {
-                    const match = /language-(\w+)/.exec(className || "");
-                    const language = match ? match[1] : "";
-                    const codeString = String(children).replace(/\n$/, "");
-
-                    if (!inline && match) {
+            <div className="flex flex-col gap-3">
+              {thinkContent && isThinkVisible && (
+                <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
+                  <div className="flex items-center justify-between p-2.5 bg-bg-surface-hover/50">
+                    <button 
+                      onClick={() => setIsThinkExpanded(!isThinkExpanded)}
+                      className="flex-1 flex items-center gap-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors text-left"
+                      aria-label={isThinkExpanded ? "Recolher processo de pensamento" : "Expandir processo de pensamento"}
+                      aria-expanded={isThinkExpanded}
+                    >
+                      <Brain size={16} className={isThinkExpanded ? "text-primary" : ""} />
+                      <span>Processo de pensamento</span>
+                      {isThinkExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                    <button 
+                      onClick={() => setIsThinkVisible(false)}
+                      className="p-1.5 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-md transition-colors"
+                      title="Fechar processo de pensamento"
+                      aria-label="Fechar processo de pensamento"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {isThinkExpanded && (
+                    <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary italic whitespace-pre-wrap font-mono leading-relaxed">
+                      {thinkContent}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="markdown-body">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    pre: ({ node, children, ...props }: any) => {
+                      if (React.isValidElement(children)) {
+                        const codeProps = children.props as any;
+                        const match = /language-(\w+)/.exec(codeProps.className || "");
+                        const codeString = String(codeProps.children).replace(/\n$/, "");
+                        const language = match ? match[1] : guessLanguage(codeString);
+                        return (
+                          <CodeBlock
+                            language={language}
+                            code={codeString}
+                            userSettings={userSettings}
+                            fullMessageContent={msg.content}
+                            onAnalyzeSecurity={onAnalyzeSecurity}
+                          />
+                        );
+                      }
+                      return <pre {...props}>{children}</pre>;
+                    },
+                    code: ({ node, className, children, ...props }: any) => {
                       return (
-                        <CodeBlock
-                          language={language}
-                          code={codeString}
-                          userSettings={userSettings}
-                          fullMessageContent={msg.content}
-                        />
+                        <code
+                          className={`px-1.5 py-0.5 rounded text-sm font-mono border ${
+                            isUser ? "bg-white/10 border-white/20" : "bg-bg-code border-border-subtle"
+                          } ${className || ""}`}
+                          {...props}
+                        >
+                          {children}
+                        </code>
                       );
-                    }
-                    return (
-                      <code
-                        className={`px-1.5 py-0.5 rounded text-sm font-mono border ${
-                          isUser ? "bg-white/10 border-white/20" : "bg-bg-code border-border-subtle"
-                        }`}
-                        {...props}
-                      >
+                    },
+                    p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
+                    ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
+                    ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
+                    h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
+                    h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0">{children}</h2>,
+                    h3: ({ children }) => <h3 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h3>,
+                    blockquote: ({ children }) => (
+                      <blockquote className={`border-l-4 pl-4 italic my-4 ${isUser ? "border-white/30" : "border-primary/30"}`}>
                         {children}
-                      </code>
-                    );
-                  },
-                  p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
-                  ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
-                  ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
-                  h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
-                  h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0">{children}</h2>,
-                  h3: ({ children }) => <h3 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h3>,
-                  blockquote: ({ children }) => (
-                    <blockquote className={`border-l-4 pl-4 italic my-4 ${isUser ? "border-white/30" : "border-primary/30"}`}>
-                      {children}
-                    </blockquote>
-                  ),
-                  img: ({ src, alt }) => {
-                    if (!src) return null;
-                    const isGeneratedImage = src.startsWith("data:image");
-                    return (
-                      <span className="relative group my-4 rounded-xl overflow-hidden shadow-2xl border border-border-strong block w-fit">
-                        <img src={src} alt={alt || "Imagem"} className="max-w-full h-auto" referrerPolicy="no-referrer" />
-                        {isGeneratedImage && (
-                          <span className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
-                            <button
-                              onClick={() => handleDownloadImage(src)}
-                              className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
-                              title="Baixar Imagem"
-                            >
-                              <Download size={24} />
-                            </button>
-                            <button
-                              onClick={() => window.open(src, "_blank")}
-                              className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
-                              title="Ver em Tela Cheia"
-                            >
-                              <ExternalLink size={24} />
-                            </button>
-                          </span>
-                        )}
-                      </span>
-                    );
-                  },
-                }}
-              >
-                {msg.content}
-              </ReactMarkdown>
+                      </blockquote>
+                    ),
+                    img: ({ src, alt }) => {
+                      if (!src) return null;
+                      const isGeneratedImage = src.startsWith("data:image");
+                      return (
+                        <span className="relative group my-4 rounded-xl overflow-hidden shadow-2xl border border-border-strong block w-fit">
+                          <img src={src} alt={alt || "Imagem"} className="max-w-full h-auto" referrerPolicy="no-referrer" />
+                          {isGeneratedImage && (
+                            <span className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                              <button
+                                onClick={() => handleDownloadImage(src)}
+                                className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
+                                title="Baixar Imagem"
+                                aria-label="Baixar Imagem"
+                              >
+                                <Download size={24} />
+                              </button>
+                              <button
+                                onClick={() => window.open(src, "_blank")}
+                                className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
+                                title="Ver em Tela Cheia"
+                                aria-label="Ver em Tela Cheia"
+                              >
+                                <ExternalLink size={24} />
+                              </button>
+                            </span>
+                          )}
+                        </span>
+                      );
+                    },
+                  }}
+                >
+                  {mainContent}
+                </ReactMarkdown>
+              </div>
             </div>
           )}
         </div>
@@ -255,6 +318,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                     <button
                       onClick={() => handleDownloadImage(att.dataUrl)}
                       className="p-1.5 bg-white text-black rounded-full hover:scale-110 transition-transform"
+                      title="Baixar Anexo"
+                      aria-label="Baixar Anexo"
                     >
                       <Download size={14} />
                     </button>
@@ -273,6 +338,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   isPlaying ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
                 }`}
                 title={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
+                aria-label={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
               >
                 {isPlaying ? <VolumeX size={18} /> : <Volume2 size={18} />}
               </button>
@@ -284,6 +350,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
                   showActions ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
                 }`}
                 title="Mais opções"
+                aria-label="Mais opções"
+                aria-expanded={showActions}
               >
                 <MoreVertical size={18} />
               </button>
@@ -375,4 +443,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({
       </motion.div>
     </>
   );
-};
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.msg.id === nextProps.msg.id &&
+    prevProps.msg.content === nextProps.msg.content &&
+    prevProps.msg.role === nextProps.msg.role &&
+    JSON.stringify(prevProps.msg.attachments) === JSON.stringify(nextProps.msg.attachments) &&
+    prevProps.isCodeMode === nextProps.isCodeMode &&
+    prevProps.themeColor === nextProps.themeColor &&
+    prevProps.userPhoto === nextProps.userPhoto &&
+    prevProps.userSettings?.mode === nextProps.userSettings?.mode &&
+    prevProps.userSettings?.theme === nextProps.userSettings?.theme
+  );
+});

@@ -33,3 +33,25 @@ export const copyToClipboard = async (text: string) => {
     fallbackCopy();
   }
 };
+
+export function guessLanguage(code: string): string {
+  const trimmed = code.trim();
+  if (/^\s*</.test(trimmed) && /<\/\w+>$/.test(trimmed)) {
+    if (/html/i.test(trimmed) || /body/i.test(trimmed)) return "html";
+    return "xml";
+  }
+  if (/^import\s+.*from\s+['"]/m.test(trimmed) || /^export\s+/m.test(trimmed) || /const\s+\w+\s*=/m.test(trimmed)) {
+    if (/<[A-Z][a-zA-Z0-9]*\s*[^>]*>/.test(trimmed) || /className=/.test(trimmed)) return "tsx";
+    return "javascript";
+  }
+  if (/def\s+\w+\s*\(/m.test(trimmed) || (/import\s+[a-z_]+/m.test(trimmed) && !/from/m.test(trimmed))) return "python";
+  if (/public\s+class\s+/m.test(trimmed) || /System\.out\.println/m.test(trimmed)) return "java";
+  if (/#include\s+</m.test(trimmed)) return "cpp";
+  if (/^SELECT\s+/im.test(trimmed) || /^CREATE\s+TABLE/im.test(trimmed)) return "sql";
+  if (/^[\w-]+\s*:\s*.+/m.test(trimmed) && !/\{/.test(trimmed)) return "yaml";
+  if (/^\{.*\}$/s.test(trimmed) && /"\w+"\s*:/.test(trimmed)) return "json";
+  if (/^body\s*\{/im.test(trimmed) || /^[.#][\w-]+\s*\{/m.test(trimmed)) return "css";
+  if (/^#\s/.test(trimmed) || /^##\s/.test(trimmed) || /\[.*\]\(.*\)/.test(trimmed)) return "markdown";
+  if (/^#!/m.test(trimmed) || /echo\s+/.test(trimmed)) return "bash";
+  return "text";
+}

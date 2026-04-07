@@ -210,6 +210,7 @@ export function FullscreenEditor({
             }}
             className="p-2 sm:p-2.5 bg-bg-surface-hover text-text-muted hover:text-primary rounded-xl transition-all border border-border-strong shadow-sm"
             title="Copiar Arquivo Atual"
+            aria-label="Copiar Arquivo Atual"
           >
             <Copy size={18} className="sm:w-5 sm:h-5" />
           </button>
@@ -217,6 +218,7 @@ export function FullscreenEditor({
             onClick={onClose}
             className="p-2 sm:p-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-all shadow-lg hover:scale-110 active:scale-95"
             title="Fechar"
+            aria-label="Fechar"
           >
             <X size={20} className="sm:w-6 sm:h-6" />
           </button>
@@ -232,6 +234,7 @@ export function FullscreenEditor({
               onClick={createNewFile}
               className="p-1 hover:bg-bg-surface-hover rounded text-text-muted hover:text-primary transition-colors"
               title="Novo Arquivo"
+              aria-label="Novo Arquivo"
             >
               <Plus size={16} />
             </button>
@@ -275,6 +278,8 @@ export function FullscreenEditor({
                       setEditingFileId(file.id);
                     }}
                     className="p-1 hover:bg-black/10 rounded text-text-muted hover:text-primary"
+                    aria-label="Renomear arquivo"
+                    title="Renomear arquivo"
                   >
                     <Edit2 size={12} />
                   </button>
@@ -282,6 +287,8 @@ export function FullscreenEditor({
                     <button 
                       onClick={(e) => deleteFile(file.id, e)}
                       className="p-1 hover:bg-red-500/10 rounded text-text-muted hover:text-red-500"
+                      aria-label="Excluir arquivo"
+                      title="Excluir arquivo"
                     >
                       <Trash2 size={12} />
                     </button>

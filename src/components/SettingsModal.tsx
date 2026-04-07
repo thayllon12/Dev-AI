@@ -85,6 +85,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             onClick={onClose}
             className="text-text-muted hover:text-text-primary p-2 rounded-lg hover:bg-bg-surface-hover transition-colors"
+            aria-label="Fechar configurações"
+            title="Fechar"
           >
             <X size={20} />
           </button>
@@ -160,6 +162,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     "w-12 h-6 rounded-full transition-all relative shadow-inner",
                     currentSettings[item.id] ? "bg-primary" : "bg-bg-surface-hover"
                   )}
+                  aria-label={`Alternar ${item.label}`}
+                  role="switch"
+                  aria-checked={currentSettings[item.id]}
                 >
                   <div
                     className={cn(
@@ -207,6 +212,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             />
             <p className="text-xs text-text-muted mt-3 italic">
               Defina como a IA deve se comportar e falar com você. Isso mudará o tom das respostas.
+            </p>
+          </div>
+
+          {/* Memory Section */}
+          <div className="pt-4 border-t border-border-strong">
+            <label className="block text-sm font-bold text-text-secondary mb-3 uppercase tracking-wider flex items-center justify-between">
+              <span>Memórias da IA</span>
+              <button
+                onClick={() => updateSetting("memory", "")}
+                className="text-xs text-red-500 hover:text-red-400 font-medium flex items-center gap-1"
+                aria-label="Limpar memórias da IA"
+                title="Limpar memórias da IA"
+              >
+                <Trash2 size={12} />
+                Limpar
+              </button>
+            </label>
+            <textarea
+              value={currentSettings.memory || ""}
+              onChange={(e) => updateSetting("memory", e.target.value)}
+              placeholder="A IA lembrará das informações escritas aqui..."
+              className="w-full bg-bg-surface border border-border-strong rounded-2xl p-4 text-sm text-text-primary focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none resize-none h-32 transition-all shadow-sm font-mono"
+            />
+            <p className="text-xs text-text-muted mt-3 italic">
+              Você pode visualizar, editar ou excluir as memórias que a IA guardou sobre você.
             </p>
           </div>
 

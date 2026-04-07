@@ -148,6 +148,14 @@ service cloud.firestore {
     // ===============================================================
     // Rules
     // ===============================================================
+    match /presence/{userId} {
+      allow read: if isAuthenticated();
+      allow create, update: if isOwner(userId) && 
+                            request.resource.data.keys().hasOnly(['lastActive']) &&
+                            request.resource.data.lastActive is number;
+      allow delete: if isOwner(userId);
+    }
+
     match /users/{userId} {
       allow read: if isOwner(userId);
       allow create: if isOwner(userId) && uidUnchanged();
