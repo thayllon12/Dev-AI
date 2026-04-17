@@ -1,5 +1,5 @@
 {
   "name": "Dev AI Pro",
   "description": "Uma IA avançada para desenvolvedores, com suporte a criação de jogos, busca no Google, análise de arquivos e editor de código em tela cheia.",
-  "requestFramePermissions": ["microphone", "camera", "geolocation"]
+  "requestFramePermissions": ["microphone", "camera", "geolocation", "display-capture"]
 }

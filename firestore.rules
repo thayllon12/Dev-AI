@@ -133,6 +133,8 @@ service cloud.firestore {
              data.uid is string && data.uid.size() > 0 && data.uid.size() < 128 &&
              data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
              data.mode in ['Dev AI', 'Dev AI Code'] &&
+             (!( 'isPublic' in data ) || data.isPublic is bool) &&
+             (!( 'collaborators' in data ) || data.collaborators is list) &&
              data.createdAt is timestamp &&
              data.updatedAt is timestamp;
     }
@@ -143,6 +145,31 @@ service cloud.firestore {
              data.content is string &&
              data.createdAt is timestamp &&
              (!( 'attachments' in data ) || isValidAttachments(data.attachments));
+    }
+
+    function isCollaborator(ownerId, chatId) {
+      let chat = get(/databases/$(database)/documents/users/$(ownerId)/chats/$(chatId));
+      return chat != null && (request.auth.uid in chat.data.collaborators);
+    }
+
+    function getCollaboratorRole(ownerId, chatId) {
+      let chat = get(/databases/$(database)/documents/users/$(ownerId)/chats/$(chatId));
+      return (chat != null && 'collaboratorRoles' in chat.data && request.auth.uid in chat.data.collaboratorRoles) 
+             ? chat.data.collaboratorRoles[request.auth.uid] 
+             : 'edit';
+    }
+
+    function hasChatWriteAccess(ownerId, chatId) {
+      return isOwner(ownerId) || getCollaboratorRole(ownerId, chatId) in ['edit', 'admin'];
+    }
+
+    function hasChatAdminAccess(ownerId, chatId) {
+      return isOwner(ownerId) || getCollaboratorRole(ownerId, chatId) == 'admin';
+    }
+
+    function isPublicChat(ownerId, chatId) {
+      let chat = get(/databases/$(database)/documents/users/$(ownerId)/chats/$(chatId));
+      return chat != null && chat.data.isPublic == true;
     }
 
     // ===============================================================
@@ -157,22 +184,35 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if isOwner(userId);
+      allow read: if isAuthenticated();
       allow create: if isOwner(userId) && uidUnchanged();
       allow update: if isOwner(userId) && uidNotModified();
       allow delete: if isOwner(userId);
 
-      match /chats/{chatId} {
+      match /sharedChats/{chatId} {
         allow read: if isOwner(userId);
+        allow create: if isAuthenticated(); // Anyone can share a chat with this user
+        allow update: if isOwner(userId);
+        allow delete: if isOwner(userId) || (isAuthenticated() && resource.data.ownerId == request.auth.uid);
+      }
+
+      match /chats/{chatId} {
+        allow read: if isOwner(userId) || (isAuthenticated() && (request.auth.uid in resource.data.collaborators || resource.data.isPublic == true));
         allow create: if isOwner(userId) && uidUnchanged();
-        allow update: if isOwner(userId) && uidNotModified();
-        allow delete: if isOwner(userId);
+        allow update: if (isOwner(userId) && uidNotModified()) || 
+                      (isAuthenticated() && request.auth.uid in resource.data.collaborators && 
+                       ( (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt', 'isGenerating']) && getCollaboratorRole(userId, chatId) in ['edit', 'admin']) ||
+                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['collaborators']) && request.resource.data.collaborators.hasAll(resource.data.collaborators.removeAll([request.auth.uid]))) || // Any collaborator can remove themselves
+                         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['collaborators', 'collaboratorRoles', 'isPublic']) && getCollaboratorRole(userId, chatId) == 'admin')
+                       )
+                      );
+        allow delete: if isOwner(userId) || getCollaboratorRole(userId, chatId) == 'admin';
 
         match /messages/{messageId} {
-          allow read: if isOwner(userId);
-          allow create: if isOwner(userId) && uidUnchanged();
-          allow update: if isOwner(userId) && uidNotModified();
-          allow delete: if isOwner(userId);
+          allow read: if isOwner(userId) || isCollaborator(userId, chatId) || isPublicChat(userId, chatId);
+          allow create: if hasChatWriteAccess(userId, chatId) && uidUnchanged();
+          allow update: if hasChatWriteAccess(userId, chatId) && uidNotModified();
+          allow delete: if hasChatAdminAccess(userId, chatId) || (hasChatWriteAccess(userId, chatId) && resource.data.uid == request.auth.uid);
         }
       }
     }

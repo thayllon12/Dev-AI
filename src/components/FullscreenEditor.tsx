@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
-import { X, Play, Maximize2, ChevronUp, ChevronDown, Download, Copy, CheckCheck, File, ExternalLink, Plus, Trash2, Edit2, FileCode } from "lucide-react";
+import { X, Play, Maximize2, ChevronUp, ChevronDown, Download, Copy, CheckCheck, File, ExternalLink, Plus, Trash2, Edit2, FileCode, Menu } from "lucide-react";
 import { cn, copyToClipboard } from "../lib/utils";
 import { GameModal } from "./GameModal";
+import Editor from 'react-simple-code-editor';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-tsx';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-bash';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/themes/prism-tomorrow.css'; // Dark theme
 
 interface EditorFile {
   id: string;
@@ -15,11 +27,13 @@ export function FullscreenEditor({
   language,
   onClose,
   fullMessageContent,
+  onAskAI,
 }: {
   code: string;
   language: string;
   onClose: () => void;
   fullMessageContent?: string;
+  onAskAI?: (code: string) => void;
 }) {
   const [files, setFiles] = useState<EditorFile[]>(() => {
     if (fullMessageContent) {
@@ -58,57 +72,37 @@ export function FullscreenEditor({
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const activeFile = files.find(f => f.id === activeFileId) || files[0];
   
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [suggestionPos, setSuggestionPos] = useState({ top: 0, left: 0 });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const lineNumbersRef = useRef<HTMLDivElement>(null);
 
   const keywords = ["function", "const", "let", "var", "return", "if", "else", "for", "while", "import", "export", "class", "interface", "type", "async", "await"];
 
-  const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
-    if (lineNumbersRef.current) {
-      lineNumbersRef.current.scrollTop = e.currentTarget.scrollTop;
-    }
+  const handleCodeChange = (value: string) => {
+    setFiles(prev => prev.map(f => f.id === activeFileId ? { ...f, content: value } : f));
   };
 
-  const handleCodeChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const value = e.target.value;
+  const highlightCode = (code: string) => {
+    let lang = activeFile.language;
+    if (lang === 'html') lang = 'markup';
+    if (lang === 'javascript') lang = 'javascript';
+    if (lang === 'typescript') lang = 'typescript';
+    if (lang === 'css') lang = 'css';
+    if (lang === 'python') lang = 'python';
+    if (lang === 'json') lang = 'json';
     
-    setFiles(prev => prev.map(f => f.id === activeFileId ? { ...f, content: value } : f));
-    
-    const cursor = e.target.selectionStart;
-    const textBefore = value.substring(0, cursor);
-    const lastWord = textBefore.split(/\s+/).pop() || "";
-    
-    if (lastWord.length > 1) {
-      const matches = keywords.filter(k => k.startsWith(lastWord) && k !== lastWord);
-      setSuggestions(matches);
-      
-      if (textareaRef.current) {
-        const { offsetLeft, offsetTop } = textareaRef.current;
-        setSuggestionPos({ 
-          top: offsetTop + 20, 
-          left: offsetLeft + (lastWord.length * 8) 
-        });
-      }
-    } else {
-      setSuggestions([]);
+    if (Prism.languages[lang]) {
+      return Prism.highlight(code, Prism.languages[lang], lang);
     }
+    return code; // fallback
   };
 
   const applySuggestion = (s: string) => {
-    if (!textareaRef.current) return;
-    const cursor = textareaRef.current.selectionStart;
-    const textBefore = activeFile.content.substring(0, cursor);
-    const textAfter = activeFile.content.substring(cursor);
-    const lastWord = textBefore.split(/\s+/).pop() || "";
-    const newText = textBefore.substring(0, textBefore.length - lastWord.length) + s + textAfter;
-    
-    setFiles(prev => prev.map(f => f.id === activeFileId ? { ...f, content: newText } : f));
+    // ... not fully supported with simple-code-editor easily without ref, but we can keep it basic
     setSuggestions([]);
-    textareaRef.current.focus();
   };
 
   const createNewFile = () => {
@@ -186,6 +180,12 @@ export function FullscreenEditor({
       )}
       <div className="flex items-center justify-between px-3 sm:px-6 py-3 border-b border-border-strong bg-bg-surface flex-wrap gap-2">
         <div className="flex items-center gap-2 sm:gap-4">
+          <button 
+            className="sm:hidden p-2 text-text-muted hover:text-primary transition-colors"
+            onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          >
+            <Menu size={20} />
+          </button>
           <div className="hidden sm:flex gap-2">
             <div className="w-3 h-3 rounded-full bg-red-500" />
             <div className="w-3 h-3 rounded-full bg-yellow-500" />
@@ -196,6 +196,19 @@ export function FullscreenEditor({
           </span>
         </div>
         <div className="flex items-center gap-2 sm:gap-3">
+          {onAskAI && (
+            <button
+              onClick={() => {
+                onAskAI(getCombinedCode());
+                onClose();
+              }}
+              className="p-2 sm:p-2.5 bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white rounded-xl transition-all border border-blue-500/20 shadow-sm flex items-center gap-2"
+              title="Pedir ajuda à IA"
+            >
+              <span className="text-lg leading-none">🧠</span>
+              <span className="hidden sm:inline font-bold text-sm">Ajuda da IA</span>
+            </button>
+          )}
           <button
             onClick={() => setIsPlaying(true)}
             className="p-2 sm:p-2.5 bg-green-500/10 text-green-500 hover:bg-green-500 hover:text-white rounded-xl transition-all border border-green-500/20 shadow-sm flex items-center gap-2"
@@ -225,9 +238,12 @@ export function FullscreenEditor({
         </div>
       </div>
       
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Sidebar */}
-        <div className="w-48 sm:w-64 bg-bg-surface border-r border-border-strong flex flex-col">
+        <div className={cn(
+          "absolute sm:relative z-10 h-full w-64 bg-bg-surface border-r border-border-strong flex flex-col transition-transform duration-300",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full sm:translate-x-0"
+        )}>
           <div className="p-3 border-b border-border-strong flex items-center justify-between">
             <span className="text-xs font-bold text-text-muted uppercase tracking-widest">Arquivos</span>
             <button 
@@ -243,7 +259,10 @@ export function FullscreenEditor({
             {files.map(file => (
               <div 
                 key={file.id}
-                onClick={() => setActiveFileId(file.id)}
+                onClick={() => {
+                  setActiveFileId(file.id);
+                  setIsSidebarOpen(false);
+                }}
                 className={cn(
                   "flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer group transition-colors",
                   activeFileId === file.id ? "bg-primary/10 text-primary" : "text-text-muted hover:bg-bg-surface-hover hover:text-text-primary"
@@ -300,40 +319,21 @@ export function FullscreenEditor({
         </div>
 
         {/* Editor Area */}
-        <div className="flex-1 flex overflow-hidden font-mono text-sm bg-bg-main">
-          <div 
-            ref={lineNumbersRef}
-            className="w-12 bg-bg-surface border-r border-border-strong py-4 text-right pr-3 text-text-muted/30 select-none overflow-hidden"
-          >
-            <pre className="whitespace-pre-wrap leading-6 m-0">{lineNumbers}</pre>
-          </div>
-          <div className="flex-1 relative">
-            <textarea
-              ref={textareaRef}
+        <div className="flex-1 flex overflow-hidden font-mono text-sm bg-bg-main custom-scrollbar overflow-y-auto">
+          <div className="flex-1 relative min-w-0">
+            <Editor
               value={activeFile.content}
-              onChange={handleCodeChange}
-              onScroll={handleScroll}
-              className="w-full h-full bg-transparent text-text-primary p-4 outline-none resize-none leading-6 custom-scrollbar overflow-y-auto"
-              spellCheck={false}
+              onValueChange={handleCodeChange}
+              highlight={highlightCode}
+              padding={16}
+              style={{
+                fontFamily: '"JetBrains Mono", "Fira Code", monospace',
+                fontSize: 14,
+                minHeight: '100%',
+                backgroundColor: 'transparent',
+              }}
+              className="editor-container w-full h-full text-text-primary outline-none"
             />
-            
-            {suggestions.length > 0 && (
-              <div className="absolute bg-bg-surface border border-border-strong rounded-lg shadow-2xl p-1 z-50 min-w-[150px]"
-                   style={{ 
-                     top: suggestionPos.top,
-                     left: suggestionPos.left 
-                   }}>
-                {suggestions.map((s, i) => (
-                  <button
-                    key={i}
-                    onClick={() => applySuggestion(s)}
-                    className="w-full text-left px-3 py-1.5 text-xs text-text-primary hover:bg-primary hover:text-white rounded transition-colors"
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -342,10 +342,6 @@ export function FullscreenEditor({
         <div className="flex items-center gap-4">
           <span>UTF-8</span>
           <span>{activeFile.language || "Plain Text"}</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <span>Linha {activeFile.content.substring(0, textareaRef.current?.selectionStart || 0).split("\n").length}</span>
-          <span>Coluna {(textareaRef.current?.selectionStart || 0) - activeFile.content.lastIndexOf("\n", (textareaRef.current?.selectionStart || 0) - 1)}</span>
         </div>
       </div>
     </div>

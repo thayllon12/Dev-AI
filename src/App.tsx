@@ -24,6 +24,8 @@ import {
   Timestamp,
   getDocFromServer,
   writeBatch,
+  arrayUnion,
+  arrayRemove,
 } from "firebase/firestore";
 import { auth, db } from "./firebase";
 import { GoogleGenAI, Type as GenAIType } from "@google/genai";
@@ -33,6 +35,7 @@ import {
   Plus,
   MessageSquare,
   Trash2,
+  Users,
   Menu,
   X,
   Code2,
@@ -66,11 +69,21 @@ import {
   AudioLines,
   Brain,
   GraduationCap,
+  ChevronDown,
+  ChevronUp,
+  MonitorUp,
+  MonitorOff,
+  Video,
+  Music,
+  Presentation,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { MessageBubble } from "./components/MessageBubble";
 import { SettingsModal } from "./components/SettingsModal";
+import { ShareModal } from "./components/ShareModal";
+import { PasteModal } from "./components/PasteModal";
 import { AILogo } from "./components/AILogo";
+import { MiniDev } from "./components/MiniDev";
 
 import { cn, copyToClipboard } from "./lib/utils";
 
@@ -127,8 +140,27 @@ const resizeImageBase64 = async (
 };
 
 // --- AI Configuration ---
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
 // AI initialization helper to support custom keys
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY || process.env.GEMINI_API_KEY });
+const getAI = (customKey?: string) => {
+  // Tenta pegar a chave na seguinte ordem:
+  // 1. Chave digitada nas configurações do app pelo usuário
+  // 2. Variável de ambiente VITE_GEMINI_API_KEY (usada no GitHub Pages / Vercel)
+  // 3. Variável de ambiente padrão do AI Studio (GEMINI_API_KEY)
+  const key = customKey?.trim() || (import.meta as any).env.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
+  if (!key) {
+    throw new Error("Chave da API do Gemini não encontrada. Configure-a nas opções.");
+  }
+  return new GoogleGenAI({ apiKey: key });
+};
 const TEXT_MODEL = "gemini-3.1-pro-preview";
 
 export default function App() {
@@ -138,6 +170,7 @@ export default function App() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const recognitionRef = useRef<any>(null);
   const [userSettings, setUserSettings] = useState({
@@ -150,21 +183,124 @@ export default function App() {
     fullscreenEditor: false,
     notificationsEnabled: true,
     isDevUnlocked: false,
+    realVoiceEnabled: false,
+    geminiApiKey: "",
   });
   const [onlineUsersCount, setOnlineUsersCount] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [chats, setChats] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [isSearchingGlobal, setIsSearchingGlobal] = useState(false);
+  const [globalSearchResults, setGlobalSearchResults] = useState<any[]>([]);
   const [currentChatId, setCurrentChatId] = useState<string | null>(null);
+  const [currentChatOwnerId, setCurrentChatOwnerId] = useState<string | null>(null);
+
+  const handleGlobalSearch = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!searchQuery.trim() || !user) return;
+    
+    setIsSearchingGlobal(true);
+    setGlobalSearchResults([]);
+    
+    try {
+      const results: any[] = [];
+      for (const chat of chats) {
+        if (chat.isShared) continue; // Skip shared chats for now to avoid permission issues
+        const messagesRef = collection(db, "users", user.uid, "chats", chat.id, "messages");
+        const snapshot = await getDocs(messagesRef);
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (data.content && data.content.toLowerCase().includes(searchQuery.toLowerCase())) {
+            results.push({ 
+              chat, 
+              message: { id: doc.id, ...data } 
+            });
+          }
+        });
+      }
+      setGlobalSearchResults(results);
+    } catch (error) {
+      console.error("Global search error:", error);
+    } finally {
+      setIsSearchingGlobal(false);
+    }
+  };
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [pasteModalText, setPasteModalText] = useState<string | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
-  const [streamingMessage, setStreamingMessage] = useState<string | null>(null);
+  const [streamingThinkContent, setStreamingThinkContent] = useState<string | null>(null);
+  const [isStreamingThinkExpanded, setIsStreamingThinkExpanded] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
 
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [currentUserRole, setCurrentUserRole] = useState<string>("owner");
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+
+  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
+  const screenVideoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    if (screenVideoRef.current && screenStream) {
+      screenVideoRef.current.srcObject = screenStream;
+    }
+  }, [screenStream]);
+
+  const toggleScreenShare = async () => {
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => track.stop());
+      setScreenStream(null);
+      return;
+    }
+    
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      if (window.self !== window.top) {
+        toast.error("O painel do AI Studio bloqueia a captura de tela. Por favor, abra o app em uma NOVA GUIA para usar esta função!");
+      } else {
+        toast.error("O compartilhamento de tela não é suportado neste navegador (celulares/tablets geralmente não suportam).");
+      }
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+      setScreenStream(stream);
+      stream.getVideoTracks()[0].onended = () => {
+        setScreenStream(null);
+      };
+      toast.success("Tela compartilhada! A IA agora pode ver sua tela a cada mensagem enviada.");
+    } catch (err) {
+      console.error("Error sharing screen:", err);
+      toast.error("Não foi possível compartilhar a tela. Verifique as permissões.");
+    }
+  };
+
+  const captureScreenFrame = (): string | null => {
+    if (!screenVideoRef.current || !screenStream) return null;
+    const video = screenVideoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return null;
+    
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.7);
+  };
+
+  // Abort local generation if isGenerating becomes false externally (e.g., collaborator clicked stop)
+  useEffect(() => {
+    if (!isGenerating && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      setStreamingThinkContent(null);
+    }
+  }, [isGenerating]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [hasCustomKey, setHasCustomKey] = useState(false);
 
@@ -326,7 +462,7 @@ export default function App() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages, streamingMessage]);
+  }, [messages, streamingThinkContent]);
 
   // 1. Auth Logic
   useEffect(() => {
@@ -363,6 +499,8 @@ export default function App() {
               fullscreenEditor: data.fullscreenEditor || false,
               notificationsEnabled: data.notificationsEnabled !== false,
               isDevUnlocked: data.isDevUnlocked || false,
+              realVoiceEnabled: data.realVoiceEnabled || false,
+              geminiApiKey: data.geminiApiKey || "",
             });
           } else {
             const userData: any = {
@@ -376,6 +514,8 @@ export default function App() {
               fullscreenEditor: false,
               notificationsEnabled: true,
               isDevUnlocked: false,
+              realVoiceEnabled: false,
+              geminiApiKey: "",
               createdAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             };
@@ -388,6 +528,40 @@ export default function App() {
           }
         } catch (error) {
           handleFirestoreError(error, OperationType.GET, `users/${currentUser.uid}`);
+        }
+
+        // Check URL for shared chat
+        const params = new URLSearchParams(window.location.search);
+        const urlChatId = params.get("chatId");
+        const urlOwnerId = params.get("ownerId");
+        if (urlChatId && urlOwnerId) {
+          setCurrentChatId(urlChatId);
+          setCurrentChatOwnerId(urlOwnerId);
+          
+          // Add pointer document if not owner
+          if (urlOwnerId !== currentUser.uid) {
+            try {
+              const chatRef = doc(db, "users", urlOwnerId, "chats", urlChatId);
+              const chatSnap = await getDoc(chatRef);
+              if (chatSnap.exists()) {
+                const chatData = chatSnap.data();
+                const sharedChatRef = doc(db, "users", currentUser.uid, "sharedChats", urlChatId);
+                await setDoc(sharedChatRef, {
+                  isShared: true,
+                  ownerId: urlOwnerId,
+                  title: chatData.title || "Chat Compartilhado",
+                  mode: chatData.mode || "Dev AI",
+                  createdAt: new Date(),
+                  updatedAt: new Date()
+                }, { merge: true });
+              }
+            } catch (e) {
+              console.error("Error adding shared chat pointer:", e);
+            }
+          }
+          
+          // Remove from URL to prevent re-triggering
+          window.history.replaceState({}, document.title, window.location.pathname);
         }
       }
       setIsAuthReady(true);
@@ -431,38 +605,97 @@ export default function App() {
     if (!user || !isAuthReady) return;
 
     const chatsRef = collection(db, "users", user.uid, "chats");
-    const q = query(chatsRef, orderBy("updatedAt", "desc"));
+    const qChats = query(chatsRef, orderBy("updatedAt", "desc"));
 
-    const unsubscribe = onSnapshot(
-      q,
+    const sharedChatsRef = collection(db, "users", user.uid, "sharedChats");
+    const qSharedChats = query(sharedChatsRef, orderBy("updatedAt", "desc"));
+
+    let myChats: any[] = [];
+    let mySharedChats: any[] = [];
+
+    const updateChats = () => {
+      const allChats = [...myChats, ...mySharedChats].sort((a, b) => {
+        const dateA = a.updatedAt?.toDate ? a.updatedAt.toDate() : new Date(a.updatedAt || 0);
+        const dateB = b.updatedAt?.toDate ? b.updatedAt.toDate() : new Date(b.updatedAt || 0);
+        return dateB.getTime() - dateA.getTime();
+      });
+      setChats(allChats);
+    };
+
+    const unsubChats = onSnapshot(
+      qChats,
       (snapshot) => {
-        const chatList = snapshot.docs.map((doc) => ({
+        myChats = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
-        setChats(chatList);
+        updateChats();
       },
       (error) => {
         handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/chats`);
       },
     );
 
-    return () => unsubscribe();
+    const unsubSharedChats = onSnapshot(
+      qSharedChats,
+      (snapshot) => {
+        mySharedChats = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+        updateChats();
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/sharedChats`);
+      },
+    );
+
+    return () => {
+      unsubChats();
+      unsubSharedChats();
+    };
   }, [user, isAuthReady]);
 
   // 3. Fetch Messages for Current Chat
   useEffect(() => {
     if (!user || !isAuthReady || !currentChatId) {
       setMessages([]);
+      setIsGenerating(false);
       return;
     }
 
     setMessages([]); // Clear messages immediately to avoid lag when switching chats
 
+    const activeOwnerId = currentChatOwnerId || user.uid;
+
+    // Listen to chat document for isGenerating state and roles
+    const chatDocRef = doc(db, "users", activeOwnerId, "chats", currentChatId);
+    const unsubChat = onSnapshot(chatDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        if (data.isGenerating !== undefined) {
+          setIsGenerating(data.isGenerating);
+          if (data.isGenerating) {
+            setStatusMessage("Pensando...");
+          } else {
+            setStatusMessage(null);
+          }
+        }
+        
+        if (activeOwnerId === user.uid) {
+           setCurrentUserRole("owner");
+        } else {
+           const roles = data.collaboratorRoles || {};
+           const role = roles[user.uid] || "edit"; // Default to edit
+           setCurrentUserRole(role);
+        }
+      }
+    });
+
     const messagesRef = collection(
       db,
       "users",
-      user.uid,
+      activeOwnerId,
       "chats",
       currentChatId,
       "messages",
@@ -479,12 +712,15 @@ export default function App() {
         setMessages(msgList);
       },
       (error) => {
-        handleFirestoreError(error, OperationType.LIST, `users/${user.uid}/chats/${currentChatId}/messages`);
+        handleFirestoreError(error, OperationType.LIST, `users/${activeOwnerId}/chats/${currentChatId}/messages`);
       },
     );
 
-    return () => unsubscribe();
-  }, [user, isAuthReady, currentChatId]);
+    return () => {
+      unsubscribe();
+      unsubChat();
+    };
+  }, [user, isAuthReady, currentChatId, currentChatOwnerId]);
 
   // Scroll to bottom
   useEffect(() => {
@@ -530,8 +766,28 @@ export default function App() {
       "theme-green",
       "theme-purple",
     );
-    root.classList.add("theme-black");
-  }, []);
+    
+    // Default color logic
+    const isCodeMode = userSettings.mode === "Thinking";
+    const isNanoBanana = userSettings.mode === "Nano Banana";
+    const isStudent = userSettings.mode === "Student";
+    
+    let activeColor = userSettings.colorTheme;
+    if (!activeColor || activeColor === "auto") {
+      if (isCodeMode) activeColor = "red";
+      else if (isNanoBanana) activeColor = "yellow";
+      else if (isStudent) activeColor = "green";
+      else activeColor = "blue"; 
+    }
+
+    // Yellow is not mapped to a theme explicitly, let's just make it blue or nothing if missing
+    if (activeColor && activeColor !== "auto" && activeColor !== "yellow") {
+      root.classList.add(`theme-${activeColor}`);
+    } else {
+       // if activeColor isn't one of the pre-defined themes, fallback
+       root.classList.add("theme-blue");
+    }
+  }, [userSettings.colorTheme, userSettings.mode]);
 
   const handleLoginGoogle = async () => {
     const provider = new GoogleAuthProvider();
@@ -588,6 +844,18 @@ export default function App() {
     const memoryInstruction = userSettings.memory
       ? `\nMEMÓRIA DO USUÁRIO (Lembre-se sempre destas informações e aplique-as em todas as suas respostas):\n${userSettings.memory}\n`
       : "";
+      
+    const currentChat = chats.find(c => c.id === currentChatId);
+    const isCollab = currentChat?.isShared || (currentChat?.collaborators && Object.keys(currentChat.collaborators).length > 0);
+    const collabInstruction = isCollab 
+      ? `\nMODO COLABORATIVO ATIVADO:
+Você está em um chat em grupo com múltiplos usuários. As mensagens dos usuários começarão com o nome deles, por exemplo "[João]: Olá".
+Aja como um participante ativo, inteligente e carismático dessa roda de conversa. 
+- Chame as pessoas pelo nome naturalmente.
+- Reconheça a dinâmica do grupo: se duas pessoas tiverem ideias diferentes, ajude a uni-las ou debater; se alguém fizer uma brincadeira, entre no clima.
+- Seja descontraído, engajador e humano. Faça perguntas para o grupo e misture as ideias de todos de forma fluida.\n`
+      : "";
+
     const artifactsInstruction = `
 SISTEMA DE ARTEFATOS E CRIAÇÃO DE JOGOS:
 Se o usuário pedir para criar, fazer, construir ou escrever algo longo, estruturado, interativo ou reutilizável (como código HTML/CSS/JS, componentes React, scripts complexos, documentos longos, ferramentas interativas), você DEVE usar o formato de Artefato.
@@ -596,11 +864,49 @@ Se for um jogo web (HTML/JS), utilize a API Canvas do HTML5 para renderizar os g
 Responda conversacionalmente de forma breve e, em seguida, forneça o código completo e funcional dentro de blocos de código markdown apropriados.
 Não deixe partes incompletas. O código deve ser testável e documentado.
 
-MÚLTIPLOS CÓDIGOS E TAMANHO ILIMITADO (SEPARAÇÃO ESTRITA):
+MÚLTIPLOS CÓDIGOS E TAMANHO ILIMITADO (SEPARAÇÃO ESTRITA E ARQUIVOS GIGANTES):
 Você tem permissão e capacidade para enviar VÁRIOS blocos de código na mesma resposta. 
 Quando o usuário pedir vários scripts (ex: Local Script, Server Script, HTML, Java, Python, etc.), você DEVE enviar CADA ARQUIVO em um bloco de código markdown SEPARADO na mesma mensagem.
 NUNCA junte códigos de arquivos diferentes no mesmo bloco. Sempre separe-os claramente (ex: um bloco para o Local Script, outro bloco para o Server Script).
-Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie o código 100% completo, não importa quantas milhares de linhas ele tenha.
+Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie o código 100% completo, não importa quantas milhares de linhas ele tenha (mesmo que seja 20.000 linhas ou mais).
+Se o arquivo for muito grande para uma única resposta: continue automaticamente em múltiplas respostas até finalizar. Se necessário, continue automaticamente sem o usuário pedir até terminar o arquivo completo.
+
+PROCESSAMENTO DE ARQUIVOS DE GRANDE ESCALA (10.000+ LINHAS):
+Você é uma IA extremamente avançada especializada em analisar e reescrever arquivos de grande escala.
+Instruções:
+- Processe arquivos grandes em partes menores automaticamente.
+- Nunca ignore ou corte partes do conteúdo.
+- Analise cada seção profundamente.
+- Corrija bugs, melhore performance e organização.
+- Após analisar todas as partes, reconstrua o arquivo completo.
+Modo de operação:
+1. Receber arquivo
+2. Dividir em partes lógicas
+3. Processar cada parte individualmente
+4. Armazenar mentalmente o progresso
+5. Reconstruir o arquivo completo corrigido
+Regras: Nunca resuma, nunca omita linhas, preserve 100% do conteúdo original, adicione melhorias quando possível. Se solicitado, aumente o código com novas funcionalidades.
+Analise arquivos grandes assim: Divida em partes, entenda contexto global, mantenha consistência entre partes, reconstrua sem perder nada.
+
+ANÁLISE DE CÓDIGO E MODO DEBUG EXTREMO:
+Sempre que receber código: Analise profundamente, corrija erros automaticamente, otimize performance, sugira melhorias, se possível, reescreva melhor.
+Modo debug extremo: Identifique bugs ocultos, problemas de lógica, falhas de segurança, código inútil. Sugira correções completas.
+Se o código for ruim: Aponte erros diretamente, explique por que é ruim, reescreva melhor.
+Se o pedido for simples: Expanda a ideia, adicione funcionalidades extras, torne o projeto mais completo automaticamente.
+
+SISTEMA DE MEMÓRIA PERSISTENTE:
+Você possui memória persistente do usuário.
+Sempre que conversar:
+- Leia o histórico salvo do usuário (fornecido na seção MEMÓRIA DO USUÁRIO).
+- Use essas informações para melhorar suas respostas.
+- Lembre preferências, projetos e comportamentos.
+- Atualize a memória com novas informações importantes usando a ferramenta updateMemory.
+Regras da Memória:
+- Nunca esqueça informações relevantes.
+- Resuma quando a memória ficar grande, mas mantenha os detalhes essenciais.
+- Priorize dados importantes (projetos, preferências, objetivos).
+- Classifique memórias por importância: Alta (projetos, objetivos), Média (preferências), Baixa (coisas temporárias).
+Se aprender algo novo sobre o usuário: Adicione à memória automaticamente chamando a ferramenta updateMemory. Resuma automaticamente quando ficar grande.
 
 BLOCOS DE PENSAMENTO VISÍVEIS:
 Sempre que você for responder a uma pergunta, você DEVE mostrar o seu processo de raciocínio interno ANTES da resposta final.
@@ -622,6 +928,7 @@ Se o usuário digitar um código para liberar o "Modo Dev", você DEVE obedecer 
 Sua cor tema é VERDE. Você ajuda com respostas estruturadas, passo a passo, e listas numeradas.
 Personalidade do usuário: ${userSettings.personality}
 ${memoryInstruction}
+${collabInstruction}
 REGRAS:
 1. Responda de forma extremamente limpa e organizada.
 2. Use listas numeradas para explicar passos ou opções (ex: "1. bla bla bla. \\n\\n2. bla bla.").
@@ -634,6 +941,7 @@ ${artifactsInstruction}`;
 Sua cor tema é VERMELHO. Você é focado, técnico e extremamente habilidoso. Você não tem limites de texto e deve fornecer códigos completos, por mais longos que sejam.
 Personalidade do usuário: ${userSettings.personality}
 ${memoryInstruction}
+${collabInstruction}
 REGRAS:
 1. Forneça códigos completos e complexos, sem omissões. Se o código for gigante (mais de 10 mil linhas), envie-o integralmente.
 2. Explique detalhadamente a lógica antes do código.
@@ -644,10 +952,11 @@ REGRAS:
 7. OBRIGATÓRIO: Use as tags <think> e </think> no início de TODAS as suas respostas para mostrar o seu processo de raciocínio.
 ${artifactsInstruction}`;
     } else {
-      return `Você é o "Dev AI" (Modo Fast), um assistente de IA normal e versátil, semelhante ao ChatGPT, Claude ou Gemini.
+      return `Você é o "Dev AI" (Modo Fast), um assistente de IA normal e versátil, semelhante ao Claude ou Gemini.
 Sua cor tema é AZUL. Você pode ajudar com qualquer assunto, desde redação até matemática e conhecimentos gerais.
 Personalidade do usuário: ${userSettings.personality}
 ${memoryInstruction}
+${collabInstruction}
 REGRAS:
 1. Seja prestativo e claro.
 2. Use formatação markdown para organizar suas respostas.
@@ -728,9 +1037,9 @@ ${artifactsInstruction}`;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       
-      // Limit file size to 2MB for non-images and 10MB for images
-      if (!file.type.startsWith("image/") && file.size > 2 * 1024 * 1024) {
-        setErrorMessage("O arquivo " + file.name + " é muito grande. O tamanho máximo permitido para documentos é 2MB.");
+      // Limit file size to 20MB for non-images and 10MB for images
+      if (!file.type.startsWith("image/") && file.size > 20 * 1024 * 1024) {
+        setErrorMessage("O arquivo " + file.name + " é muito grande. O tamanho máximo permitido para documentos é 20MB.");
         continue;
       }
       if (file.type.startsWith("image/") && file.size > 10 * 1024 * 1024) {
@@ -784,19 +1093,7 @@ ${artifactsInstruction}`;
     const pastedText = e.clipboardData?.getData("text");
     if (pastedText && pastedText.length > 2000) {
       e.preventDefault();
-      const blob = new Blob([pastedText], { type: "text/plain" });
-      const file = new window.File([blob], "texto_colado.txt", { type: "text/plain" });
-      
-      const reader = new FileReader();
-      const dataUrl = await new Promise<string>((resolve) => {
-        reader.onload = (ev) => resolve(ev.target?.result as string);
-        reader.readAsDataURL(file);
-      });
-      
-      setAttachments((prev) => [
-        ...prev,
-        { file, dataUrl, mimeType: "text/plain" },
-      ]);
+      setPasteModalText(pastedText);
       return;
     }
 
@@ -812,9 +1109,9 @@ ${artifactsInstruction}`;
         const file = items[i].getAsFile();
         if (!file) continue;
 
-        // Limit file size to 2MB for non-images and 10MB for images
-        if (!file.type.startsWith("image/") && file.size > 2 * 1024 * 1024) {
-          setErrorMessage("O arquivo colado é muito grande. O tamanho máximo permitido para documentos é 2MB.");
+        // Limit file size to 20MB for non-images and 10MB for images
+        if (!file.type.startsWith("image/") && file.size > 20 * 1024 * 1024) {
+          setErrorMessage("O arquivo colado é muito grande. O tamanho máximo permitido para documentos é 20MB.");
           continue;
         }
         if (file.type.startsWith("image/") && file.size > 10 * 1024 * 1024) {
@@ -876,15 +1173,82 @@ ${artifactsInstruction}`;
     }
 
     const userQuery = input.trim();
-    const currentAttachments = [...attachments];
+    let currentAttachments = [...attachments];
+
+    if (screenStream) {
+      const frameBase64 = captureScreenFrame();
+      if (frameBase64) {
+        currentAttachments.push({
+          file: new window.File([], "screen_capture.jpg", { type: "image/jpeg" }),
+          dataUrl: frameBase64,
+          mimeType: "image/jpeg"
+        });
+      }
+    }
+
     setInput("");
     setAttachments([]);
     setIsLoading(true);
     setIsGenerating(true);
 
     let chatId = currentChatId;
+    const activeOwnerId = currentChatOwnerId || user.uid;
 
     try {
+      if (editingMessageId && chatId) {
+        const msgIndex = messages.findIndex((m) => m.id === editingMessageId);
+        if (msgIndex !== -1) {
+          // Update chat document
+          await updateDoc(doc(db, "users", activeOwnerId, "chats", chatId), {
+            isGenerating: true,
+            updatedAt: serverTimestamp()
+          });
+
+          const attachmentsData = currentAttachments.map((a) => ({
+            dataUrl: a.dataUrl,
+            mimeType: a.mimeType,
+          }));
+
+          // Update the edited message
+          const msgRef = doc(
+            db,
+            "users",
+            activeOwnerId,
+            "chats",
+            chatId,
+            "messages",
+            editingMessageId,
+          );
+          await updateDoc(msgRef, { content: userQuery, attachments: attachmentsData });
+
+          // Delete all subsequent messages
+          const messagesToDelete = messages.slice(msgIndex + 1);
+          for (const msg of messagesToDelete) {
+            if (msg.id) {
+              await deleteDoc(
+                doc(
+                  db,
+                  "users",
+                  activeOwnerId,
+                  "chats",
+                  chatId,
+                  "messages",
+                  msg.id,
+                ),
+              );
+            }
+          }
+
+          // Generate new response based on history up to this edited message
+          const historyToUse = messages.slice(0, msgIndex);
+          historyToUse.push({ ...messages[msgIndex], content: userQuery, attachments: attachmentsData });
+
+          setEditingMessageId(null);
+          await generateResponse(historyToUse, chatId);
+          return;
+        }
+      }
+
       // Create new chat if none exists
       if (!chatId) {
         const chatsRef = collection(db, "users", user.uid, "chats");
@@ -892,7 +1256,7 @@ ${artifactsInstruction}`;
         // Generate a smart title
         let smartTitle = userQuery.substring(0, 30) + "...";
         try {
-          const ai = getAI();
+          const ai = getAI(userSettings.geminiApiKey);
           const titleResponse = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
             contents: `Gere um título curto e descritivo (máximo 4 palavras) para um chat que começa com esta mensagem: "${userQuery}". Retorne APENAS o título, sem aspas ou explicações.`,
@@ -911,9 +1275,11 @@ ${artifactsInstruction}`;
             mode: userSettings.mode,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
+            isGenerating: true
           });
           chatId = newChatDoc.id;
           setCurrentChatId(chatId);
+          setCurrentChatOwnerId(user.uid);
         } catch (error) {
           handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}/chats`);
           setIsLoading(false);
@@ -921,11 +1287,12 @@ ${artifactsInstruction}`;
         }
       } else {
         try {
-          await updateDoc(doc(db, "users", user.uid, "chats", chatId), {
+          await updateDoc(doc(db, "users", activeOwnerId, "chats", chatId), {
             updatedAt: serverTimestamp(),
+            isGenerating: true
           });
         } catch (error) {
-          handleFirestoreError(error, OperationType.UPDATE, `users/${user.uid}/chats/${chatId}`);
+          handleFirestoreError(error, OperationType.UPDATE, `users/${activeOwnerId}/chats/${chatId}`);
         }
       }
 
@@ -933,7 +1300,7 @@ ${artifactsInstruction}`;
       const messagesRef = collection(
         db,
         "users",
-        user.uid,
+        activeOwnerId,
         "chats",
         chatId,
         "messages",
@@ -949,9 +1316,12 @@ ${artifactsInstruction}`;
           content: userQuery,
           attachments: attachmentsData,
           createdAt: serverTimestamp(),
+          authorId: user.uid,
+          authorName: user.displayName || "Usuário",
+          authorPhoto: user.photoURL || ""
         });
       } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}/chats/${chatId}/messages`);
+        handleFirestoreError(error, OperationType.CREATE, `users/${activeOwnerId}/chats/${chatId}/messages`);
         setIsLoading(false);
         return;
       }
@@ -959,7 +1329,7 @@ ${artifactsInstruction}`;
       // Prepare history for Gemini
       const rawHistory = [
         ...messages,
-        { role: "user", content: userQuery, attachments: attachmentsData },
+        { role: "user", content: userQuery, attachments: attachmentsData, authorName: user.displayName || "Usuário" },
       ];
 
       await generateResponse(rawHistory, chatId);
@@ -995,54 +1365,12 @@ ${artifactsInstruction}`;
     }
   };
 
-  const handleEdit = useEvent(async (msg: any, newContent: string) => {
-    if (!user || !currentChatId) return;
-    const msgId = msg.id;
-
-    const msgIndex = messages.findIndex((m) => m.id === msgId);
-    if (msgIndex === -1) return;
-
-    setIsLoading(true);
-    setIsGenerating(true);
-    try {
-      // Update the edited message
-      const msgRef = doc(
-        db,
-        "users",
-        user.uid,
-        "chats",
-        currentChatId,
-        "messages",
-        msgId,
-      );
-      await updateDoc(msgRef, { content: newContent });
-
-      // Delete all subsequent messages
-      const messagesToDelete = messages.slice(msgIndex + 1);
-      for (const msg of messagesToDelete) {
-        if (msg.id) {
-          await deleteDoc(
-            doc(
-              db,
-              "users",
-              user.uid,
-              "chats",
-              currentChatId,
-              "messages",
-              msg.id,
-            ),
-          );
-        }
-      }
-
-      // Generate new response based on history up to this edited message
-      const historyToUse = messages.slice(0, msgIndex);
-      historyToUse.push({ ...messages[msgIndex], content: newContent });
-
-      await generateResponse(historyToUse, currentChatId);
-    } catch (err) {
-      console.error("Edit error:", err);
-      setIsLoading(false);
+  const handleEditClick = useEvent((msg: any) => {
+    setInput(msg.content);
+    setAttachments(msg.attachments || []);
+    setEditingMessageId(msg.id);
+    if (textareaRef.current) {
+      textareaRef.current.focus();
     }
   });
 
@@ -1053,9 +1381,17 @@ ${artifactsInstruction}`;
     const msgIndex = messages.findIndex((m) => m.id === msgId);
     if (msgIndex === -1) return;
 
+    const activeOwnerId = currentChatOwnerId || user.uid;
+
     setIsLoading(true);
     setIsGenerating(true);
     try {
+      // Update chat document
+      await updateDoc(doc(db, "users", activeOwnerId, "chats", currentChatId), {
+        isGenerating: true,
+        updatedAt: serverTimestamp()
+      });
+
       // Delete this message and all subsequent messages
       const messagesToDelete = messages.slice(msgIndex);
       for (const msg of messagesToDelete) {
@@ -1064,7 +1400,7 @@ ${artifactsInstruction}`;
             doc(
               db,
               "users",
-              user.uid,
+              activeOwnerId,
               "chats",
               currentChatId,
               "messages",
@@ -1093,8 +1429,9 @@ ${artifactsInstruction}`;
     try {
       // 1. Create a new chat
       const chatsRef = collection(db, "users", user.uid, "chats");
-      const currentChat = chats.find(c => c.id === currentChatId);
-      const newChatTitle = currentChat ? `${currentChat.title} (Derivado)` : "Chat Derivado";
+      // If we are branching from a shared chat, we might not have it in `chats` state
+      // But we can just use a default title
+      const newChatTitle = "Chat Derivado";
       
       const newChatDoc = await addDoc(chatsRef, {
         uid: user.uid,
@@ -1102,6 +1439,7 @@ ${artifactsInstruction}`;
         mode: userSettings.mode,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        isGenerating: false
       });
       
       const newChatId = newChatDoc.id;
@@ -1122,6 +1460,8 @@ ${artifactsInstruction}`;
 
       // 3. Switch to the new chat
       setCurrentChatId(newChatId);
+      setCurrentChatOwnerId(user.uid);
+      window.history.pushState({}, '', window.location.pathname);
       toast.success("Chat derivado com sucesso!");
     } catch (err) {
       console.error("Branch error:", err);
@@ -1144,27 +1484,46 @@ ${artifactsInstruction}`;
     }, 100);
   });
 
-  const stopGeneration = () => {
+  const stopGeneration = async () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
       abortControllerRef.current = null;
     }
     setIsGenerating(false);
     setIsLoading(false);
-    setStreamingMessage(null);
+    setStreamingThinkContent(null);
+    
+    if (currentChatId) {
+      try {
+        const activeOwnerId = currentChatOwnerId || user?.uid;
+        if (activeOwnerId) {
+          await updateDoc(doc(db, "users", activeOwnerId, "chats", currentChatId), {
+            isGenerating: false,
+            updatedAt: serverTimestamp()
+          });
+        }
+      } catch (e) {
+        console.error("Error updating isGenerating on stop:", e);
+      }
+    }
   };
 
   const generateResponse = async (historyMessages: any[], chatId: string) => {
     if (!user) return;
     
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
     setIsGenerating(true);
     setStatusMessage("Pensando...");
     
-    const ai = getAI();
+    const activeOwnerId = currentChatOwnerId || user.uid;
+
+    const ai = getAI(userSettings.geminiApiKey);
     const messagesRef = collection(
       db,
       "users",
-      user.uid,
+      activeOwnerId,
       "chats",
       chatId,
       "messages",
@@ -1186,7 +1545,11 @@ ${artifactsInstruction}`;
         const parts: any[] = [];
 
         if (msg.content && msg.content.trim()) {
-          parts.push({ text: msg.content });
+          let textContent = msg.content;
+          if (role === "user" && msg.authorName) {
+            textContent = `[${msg.authorName}]: ${textContent}`;
+          }
+          parts.push({ text: textContent });
         }
 
         if (msg.attachments && msg.attachments.length > 0) {
@@ -1262,6 +1625,51 @@ ${artifactsInstruction}`;
         },
       };
 
+      const generateVideoTool = {
+        name: "generateVideo",
+        description: "Gera um vídeo usando a API Veo. Use isso quando o usuário pedir para criar, gerar ou fazer um vídeo.",
+        parameters: {
+          type: GenAIType.OBJECT,
+          properties: {
+            prompt: {
+              type: GenAIType.STRING,
+              description: "A descrição detalhada do vídeo a ser gerado (roteiro, visual, ação).",
+            },
+          },
+          required: ["prompt"],
+        },
+      };
+
+      const generateMusicTool = {
+        name: "generateMusic",
+        description: "Gera uma música usando a API Lyria. Use isso quando o usuário pedir para criar, compor ou gerar uma música, áudio ou canção.",
+        parameters: {
+          type: GenAIType.OBJECT,
+          properties: {
+            prompt: {
+              type: GenAIType.STRING,
+              description: "A descrição da música, incluindo gênero, humor, tema e letras se houver.",
+            },
+          },
+          required: ["prompt"],
+        },
+      };
+
+      const generateSliderTool = {
+        name: "generateSlider",
+        description: "Gera um slider/carrossel interativo em HTML/JS/CSS com base no conteúdo e estilo especificados pelo usuário. Retorne o código completo em um único bloco HTML.",
+        parameters: {
+          type: GenAIType.OBJECT,
+          properties: {
+            prompt: {
+              type: GenAIType.STRING,
+              description: "A descrição detalhada do slider, incluindo os slides, conteúdo, cores e estilo de transição.",
+            },
+          },
+          required: ["prompt"],
+        },
+      };
+
       let currentModel = "gemini-3.1-pro-preview";
       if (userSettings.mode === "Nano Banana") {
         currentModel = "gemini-3.1-flash-image-preview";
@@ -1314,6 +1722,7 @@ ${artifactsInstruction}`;
 
           let imgErrorMessage = `Erro ao gerar imagem: ${errorString}`;
           if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+            setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API para continuar usando sem interrupções.");
             imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
           }
           aiResponseText = imgErrorMessage;
@@ -1324,8 +1733,9 @@ ${artifactsInstruction}`;
           contents: history,
           config: {
             systemInstruction: getSystemPrompt(),
+            maxOutputTokens: 131072109, // Allow very large outputs for big files
             tools: [
-              { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool] },
+              { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool, generateVideoTool, generateMusicTool, generateSliderTool] },
               { googleSearch: {} },
             ],
             toolConfig: { includeServerSideToolInvocations: true },
@@ -1334,9 +1744,30 @@ ${artifactsInstruction}`;
 
         setStatusMessage("Escrevendo...");
 
+        let isThinking = false;
+        let currentThinkContent = "";
+
         for await (const chunk of stream) {
+          if (signal.aborted) {
+            throw new Error("AbortError");
+          }
           if (chunk.text) {
             aiResponseText += chunk.text;
+            
+            // Extract think content
+            const thinkStart = aiResponseText.indexOf("<think>");
+            const thinkEnd = aiResponseText.indexOf("</think>");
+            
+            if (thinkStart !== -1) {
+              if (thinkEnd !== -1) {
+                currentThinkContent = aiResponseText.substring(thinkStart + 7, thinkEnd).trim();
+                isThinking = false;
+              } else {
+                currentThinkContent = aiResponseText.substring(thinkStart + 7).trim();
+                isThinking = true;
+              }
+              setStreamingThinkContent(currentThinkContent);
+            }
           }
           
           if (chunk.functionCalls && chunk.functionCalls.length > 0) {
@@ -1392,8 +1823,16 @@ ${artifactsInstruction}`;
               }
             }
 
+            try {
+              const parsedErr = JSON.parse(errorString);
+              if (parsedErr.error && parsedErr.error.message) {
+                errorString = parsedErr.error.message;
+              }
+            } catch (e) {}
+
             let imgErrorMessage = `Erro ao gerar imagem: ${errorString}`;
             if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+              setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
               imgErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API de geração de imagens. Por favor, aguarde um pouco.`;
             }
             aiResponseText = imgErrorMessage;
@@ -1403,6 +1842,157 @@ ${artifactsInstruction}`;
           setStatusMessage("Atualizando memória...");
           await updateSetting("memory", newMemory);
           aiResponseText = `Memória atualizada com sucesso! Guardei a seguinte informação: "${newMemory}"`;
+        } else if (call.name === "generateVideo") {
+          const videoPrompt = call.args.prompt as string;
+          setStatusMessage(`Gerando vídeo: "${videoPrompt}" (Isso pode levar alguns minutos)...`);
+          aiResponseText = "";
+          
+          try {
+            let currentAi = ai;
+            if (window.aistudio) {
+              const hasKey = await window.aistudio.hasSelectedApiKey();
+              if (!hasKey) {
+                await window.aistudio.openSelectKey();
+                currentAi = getAI(userSettings.geminiApiKey);
+              }
+            }
+
+            let operation = await currentAi.models.generateVideos({
+              model: 'veo-3.1-lite-generate-preview',
+              prompt: videoPrompt,
+              config: {
+                numberOfVideos: 1,
+                resolution: '720p',
+                aspectRatio: '16:9'
+              }
+            });
+
+            while (!operation.done) {
+              await new Promise(resolve => setTimeout(resolve, 10000));
+              operation = await currentAi.operations.getVideosOperation({operation: operation});
+            }
+
+            const downloadLink = operation.response?.generatedVideos?.[0]?.video?.uri;
+            if (downloadLink) {
+              const apiKey = userSettings.geminiApiKey?.trim() || (import.meta as any).env.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY;
+              const response = await fetch(downloadLink, {
+                method: 'GET',
+                headers: {
+                  'x-goog-api-key': apiKey,
+                },
+              });
+              const blob = await response.blob();
+              const videoUrl = URL.createObjectURL(blob);
+              aiResponseText = `Aqui está o seu vídeo gerado pelo Veo:\n\n[VIDEO_BLOB](${videoUrl})`;
+            } else {
+              aiResponseText = "Não foi possível obter o link do vídeo gerado.";
+            }
+          } catch (videoErr: any) {
+            console.error("Video Generation Error:", videoErr);
+            if (String(videoErr).includes("Requested entity was not found") || String(videoErr).includes("PERMISSION_DENIED") || videoErr?.message?.includes("PERMISSION_DENIED")) {
+              if (window.aistudio) {
+                try {
+                  await window.aistudio.openSelectKey();
+                  aiResponseText = "Por favor, tente gerar o vídeo novamente agora que a chave foi configurada.";
+                } catch (e) {
+                  aiResponseText = "Erro: É necessário selecionar uma chave de API válida com permissão para o Veo.";
+                }
+              } else {
+                aiResponseText = "Erro de permissão. Verifique se sua chave de API tem acesso ao modelo Veo.";
+              }
+            } else {
+              aiResponseText = `Erro ao gerar vídeo: ${videoErr.message || String(videoErr)}`;
+            }
+          }
+        } else if (call.name === "generateMusic") {
+          const musicPrompt = call.args.prompt as string;
+          setStatusMessage(`Gerando música: "${musicPrompt}"...`);
+          aiResponseText = "";
+          
+          try {
+            let currentAi = ai;
+            if (window.aistudio) {
+              const hasKey = await window.aistudio.hasSelectedApiKey();
+              if (!hasKey) {
+                await window.aistudio.openSelectKey();
+                currentAi = getAI(userSettings.geminiApiKey);
+              }
+            }
+
+            const responseStream = await currentAi.models.generateContentStream({
+              model: "lyria-3-clip-preview",
+              contents: musicPrompt,
+            });
+
+            let audioBase64 = "";
+            let lyrics = "";
+            let mimeType = "audio/wav";
+
+            for await (const chunk of responseStream) {
+              const parts = chunk.candidates?.[0]?.content?.parts;
+              if (!parts) continue;
+              for (const part of parts) {
+                if (part.inlineData?.data) {
+                  if (!audioBase64 && part.inlineData.mimeType) {
+                    mimeType = part.inlineData.mimeType;
+                  }
+                  audioBase64 += part.inlineData.data;
+                }
+                if (part.text && !lyrics) {
+                  lyrics = part.text;
+                }
+              }
+            }
+
+            if (audioBase64) {
+              const binary = atob(audioBase64);
+              const bytes = new Uint8Array(binary.length);
+              for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+              }
+              const blob = new Blob([bytes], { type: mimeType });
+              const audioUrl = URL.createObjectURL(blob);
+              aiResponseText = `Aqui está a sua música gerada pelo Lyria:\n\n[AUDIO_BLOB](${audioUrl})\n\n**Letra/Detalhes:**\n${lyrics}`;
+            } else {
+              aiResponseText = "Não foi possível gerar a música.";
+            }
+          } catch (musicErr: any) {
+            console.error("Music Generation Error:", musicErr);
+            if (String(musicErr).includes("Requested entity was not found") || String(musicErr).includes("PERMISSION_DENIED") || musicErr?.message?.includes("PERMISSION_DENIED")) {
+              if (window.aistudio) {
+                try {
+                  await window.aistudio.openSelectKey();
+                  aiResponseText = "Por favor, tente gerar a música novamente agora que a chave foi configurada.";
+                } catch (e) {
+                  aiResponseText = "Erro: É necessário selecionar uma chave de API válida com permissão para o Lyria.";
+                }
+              } else {
+                aiResponseText = "Erro de permissão. Verifique se sua chave de API tem acesso ao modelo Lyria.";
+              }
+            } else {
+              aiResponseText = `Erro ao gerar música: ${musicErr.message || String(musicErr)}`;
+            }
+          }
+        } else if (call.name === "generateSlider") {
+          const sliderPrompt = call.args.prompt as string;
+          setStatusMessage(`Gerando slider interativo...`);
+          aiResponseText = "";
+          
+          try {
+            const sliderResponse = await ai.models.generateContent({
+              model: TEXT_MODEL,
+              contents: `Crie um slider/carrossel interativo em HTML, CSS e JavaScript (tudo em um único arquivo HTML) baseado nesta descrição: "${sliderPrompt}". Retorne APENAS o código HTML completo dentro de um bloco de código \`\`\`html ... \`\`\`. O slider deve ser responsivo, ter botões de navegação e transições suaves.`,
+            });
+            
+            if (sliderResponse.text) {
+              aiResponseText = sliderResponse.text;
+            } else {
+              aiResponseText = "Não foi possível gerar o código do slider.";
+            }
+          } catch (sliderErr: any) {
+            console.error("Slider Generation Error:", sliderErr);
+            aiResponseText = `Erro ao gerar o slider: ${sliderErr.message || String(sliderErr)}`;
+          }
         } else if (call.name === "generateGame") {
           const gamePrompt = call.args.prompt as string;
           setStatusMessage(`Gerando jogo: "${gamePrompt}"...`);
@@ -1434,8 +2024,16 @@ ${artifactsInstruction}`;
               }
             }
 
+            try {
+              const parsedErr = JSON.parse(errorString);
+              if (parsedErr.error && parsedErr.error.message) {
+                errorString = parsedErr.error.message;
+              }
+            } catch (e) {}
+
             let gameErrorMessage = `Erro ao gerar o jogo: ${errorString}`;
             if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+              setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
               gameErrorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco.`;
             }
             aiResponseText = gameErrorMessage;
@@ -1448,7 +2046,7 @@ ${artifactsInstruction}`;
       }
 
       setStatusMessage(null);
-      setStreamingMessage(null);
+      setStreamingThinkContent(null);
 
       try {
         await addDoc(messagesRef, {
@@ -1456,6 +2054,11 @@ ${artifactsInstruction}`;
           role: "model",
           content: aiResponseText,
           createdAt: serverTimestamp(),
+        });
+        
+        await updateDoc(doc(db, "users", activeOwnerId, "chats", chatId), {
+          isGenerating: false,
+          updatedAt: serverTimestamp()
         });
       } catch (error) {
         handleFirestoreError(error, OperationType.CREATE, `users/${user.uid}/chats/${chatId}/messages`);
@@ -1465,8 +2068,13 @@ ${artifactsInstruction}`;
         showNotification("Dev AI", aiResponseText.substring(0, 100) + "...");
       }
     } catch (err: any) {
+      if (err.message === "AbortError" || err.name === "AbortError") {
+        console.log("Generation aborted by user.");
+        return; // Do not add error message to chat
+      }
+      
       console.error("Generate Content Error:", err);
-      setStreamingMessage(null);
+      setStreamingThinkContent(null);
       setStatusMessage(null);
 
       let errorString = "";
@@ -1482,14 +2090,30 @@ ${artifactsInstruction}`;
         }
       }
 
-      if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
+      // Try to parse JSON error message if it's a stringified JSON
+      try {
+        const parsedErr = JSON.parse(errorString);
+        if (parsedErr.error && parsedErr.error.message) {
+          errorString = parsedErr.error.message;
+        }
+      } catch (e) {
+        // Not a JSON string, ignore
+      }
+
+      const isQuotaError = errorString.includes("RESOURCE_EXHAUSTED") || 
+                           errorString.includes("429") || 
+                           errorString.includes("exceeded your current quota");
+
+      if (isQuotaError) {
         setQuotaResetTime(Date.now() + 60000); 
+        setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
       }
 
       let errorMessage = `**Erro de Conexão com a IA:**\nNão foi possível gerar uma resposta. Detalhes: ${errorString || "Erro desconhecido"}`;
 
-      if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
-        errorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do Google Gemini. Por favor, aguarde um pouco ou verifique os limites de uso da sua conta.`;
+      if (isQuotaError) {
+        const providerName = "Google Gemini";
+        errorMessage = `**Limite de Uso Atingido:**\nVocê excedeu a cota atual da API do ${providerName}. Por favor, aguarde um pouco ou configure uma chave API válida nas configurações.`;
       }
 
       try {
@@ -1505,18 +2129,43 @@ ${artifactsInstruction}`;
     } finally {
       setIsLoading(false);
       setIsGenerating(false);
+      try {
+        await updateDoc(doc(db, "users", activeOwnerId, "chats", chatId), {
+          isGenerating: false,
+          updatedAt: serverTimestamp()
+        });
+      } catch (e) {
+        console.error("Error updating isGenerating to false:", e);
+      }
     }
   };
 
-  const deleteChat = async (e: React.MouseEvent, id: string) => {
+  const deleteChat = async (e: React.MouseEvent, chat: any) => {
     e.stopPropagation();
     if (!user) return;
     try {
-      await deleteDoc(doc(db, "users", user.uid, "chats", id));
-      if (currentChatId === id) setCurrentChatId(null);
-      toast.success("Chat apagado com sucesso");
+      if (chat.isShared) {
+        await deleteDoc(doc(db, "users", user.uid, "sharedChats", chat.id));
+        // Remove himself from owner's collaborators
+        try {
+          const ownerChatRef = doc(db, "users", chat.ownerId, "chats", chat.id);
+          await updateDoc(ownerChatRef, {
+            collaborators: arrayRemove(user.uid)
+          });
+        } catch (err) {
+          console.error("Could not remove from collaborators array:", err);
+        }
+        toast.success("Você saiu do chat compartilhado");
+      } else {
+        await deleteDoc(doc(db, "users", user.uid, "chats", chat.id));
+        toast.success("Chat apagado com sucesso");
+      }
+      if (currentChatId === chat.id) {
+        setCurrentChatId(null);
+        setCurrentChatOwnerId(null);
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/chats/${id}`);
+      handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/${chat.isShared ? 'sharedChats' : 'chats'}/${chat.id}`);
     }
   };
 
@@ -1530,8 +2179,17 @@ ${artifactsInstruction}`;
       snapshot.docs.forEach((doc) => {
         batch.delete(doc.ref);
       });
+
+      const sharedChatsRef = collection(db, "users", user.uid, "sharedChats");
+      const sharedSnapshot = await getDocs(sharedChatsRef);
+      sharedSnapshot.docs.forEach((doc) => {
+        batch.delete(doc.ref);
+      });
+
       await batch.commit();
       setCurrentChatId(null);
+      setCurrentChatOwnerId(null);
+      setMessages([]);
       toast.success("Todo o histórico foi apagado");
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `users/${user.uid}/chats`);
@@ -1542,9 +2200,7 @@ ${artifactsInstruction}`;
 
   const shareChat = async () => {
     if (!currentChatId || messages.length === 0) return;
-    const shareUrl = window.location.href;
-    await copyToClipboard(shareUrl);
-    toast.success("Link do chat copiado para a área de transferência!");
+    setIsShareModalOpen(true);
   };
 
   const exportChat = () => {
@@ -1582,33 +2238,34 @@ ${artifactsInstruction}`;
   if (!isAuthReady) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-bg-main text-text-primary relative overflow-hidden">
+        <audio src="/startup.mp3" autoPlay />
         {/* Background glow */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-primary/20 rounded-full blur-[100px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px]" />
         
         <div className="relative z-10 flex flex-col items-center">
-          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-6 shadow-2xl bg-primary/20 text-primary border border-primary/30 animate-pulse">
-            <Zap size={40} className="text-primary" />
+          <div className="w-24 h-24 rounded-3xl flex items-center justify-center mb-8 shadow-2xl bg-bg-surface border border-border-strong overflow-hidden animate-pulse">
+            <AILogo mode={userSettings.mode} />
           </div>
           
-          <h1 className="text-3xl font-black text-center mb-2 tracking-tight">
+          <h1 className="text-4xl font-black text-center mb-3 tracking-tight bg-gradient-to-r from-primary to-purple-500 bg-clip-text text-transparent">
             Dev AI
           </h1>
           
-          <div className="flex items-center gap-2 mt-6">
+          <div className="flex items-center gap-2 mt-8">
             <div
-              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
               style={{ animationDelay: "0ms" }}
             />
             <div
-              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
               style={{ animationDelay: "150ms" }}
             />
             <div
-              className="w-2 h-2 bg-primary rounded-full animate-bounce"
+              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
               style={{ animationDelay: "300ms" }}
             />
           </div>
-          <div className="mt-4 text-sm text-text-muted font-medium tracking-widest uppercase">
+          <div className="mt-6 text-sm text-text-muted font-medium tracking-widest uppercase">
             Iniciando Sistema
           </div>
         </div>
@@ -1673,6 +2330,15 @@ ${artifactsInstruction}`;
 
   return (
     <div className="flex h-screen bg-bg-main text-text-primary font-sans overflow-hidden">
+      {screenStream && (
+        <MiniDev 
+          isListening={isListening}
+          onListenToggle={handleListen}
+          isGenerating={isGenerating}
+          statusMessage={statusMessage}
+          onClose={() => setScreenStream(null)}
+        />
+      )}
       {/* Sidebar Overlay */}
       {isSidebarOpen && (
         <div
@@ -1686,33 +2352,33 @@ ${artifactsInstruction}`;
         className={`fixed md:relative z-50 h-full transition-all duration-300 bg-bg-sidebar flex flex-col shrink-0 ${isSidebarOpen ? "w-64 translate-x-0" : "w-0 -translate-x-full"} overflow-hidden border-r border-border-subtle`}
       >
         <div className="w-64 flex flex-col h-full">
-          <div className="p-4 flex flex-col items-center gap-4">
-          <div className="flex flex-col items-center gap-2">
-            <div className="w-20 h-20 bg-primary/10 text-primary rounded-full flex items-center justify-center overflow-hidden border-2 border-primary/20 shadow-xl">
-              <AILogo mode={userSettings.mode} />
+          <div className="p-4 flex flex-col gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-primary/10 text-primary rounded-xl flex items-center justify-center overflow-hidden border border-primary/20 shadow-sm shrink-0">
+                <AILogo mode={userSettings.mode} />
+              </div>
+              <div className="flex flex-col flex-1 min-w-0">
+                <span className={cn("text-base font-bold truncate", 
+                  userSettings.mode === "Thinking" ? "text-red-500" : 
+                  userSettings.mode === "Student" ? "text-green-500" :
+                  userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
+                  "text-blue-500"
+                )}>Dev AI 3.1</span>
+                <span className="text-[10px] text-text-muted uppercase tracking-widest font-medium truncate">Lite Mode</span>
+              </div>
             </div>
-            <div className="flex flex-col items-center text-center max-w-full px-2">
-              <span className={cn("text-sm font-bold truncate w-full", 
-                userSettings.mode === "Thinking" ? "text-red-500" : 
-                userSettings.mode === "Student" ? "text-green-500" :
-                userSettings.mode === "Nano Banana" ? "text-yellow-500" : 
-                "text-blue-500"
-              )}>Dev AI 3.1</span>
-              <span className="text-[10px] text-text-muted uppercase tracking-widest font-medium truncate w-full">Assistente de Elite</span>
-            </div>
-          </div>
           
           <button
             onClick={createNewChat}
-            className="w-full py-3 px-4 bg-primary text-white rounded-xl flex items-center justify-center gap-2 transition-all font-bold text-sm shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-[0.98]"
+            className="w-full py-2.5 px-4 bg-primary text-white rounded-xl flex items-center justify-center gap-2 transition-all font-bold text-sm shadow-md hover:scale-[1.02] active:scale-[0.98]"
           >
-            <Plus size={20} />
+            <Plus size={18} />
             Novo Chat
           </button>
         </div>
 
         <div className="px-3 pb-2">
-          <div className="relative">
+          <form onSubmit={handleGlobalSearch} className="relative">
             <Search
               size={16}
               className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
@@ -1721,38 +2387,87 @@ ${artifactsInstruction}`;
               type="text"
               placeholder="Pesquisar chats..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                if (e.target.value === "") {
+                  setGlobalSearchResults([]);
+                }
+              }}
               className="w-full bg-bg-surface text-text-primary text-sm rounded-lg pl-9 pr-3 py-2 focus:outline-none focus:ring-1 focus:ring-primary border border-border-subtle"
             />
-          </div>
+          </form>
+          {searchQuery && (
+            <button 
+              onClick={handleGlobalSearch}
+              className="w-full mt-2 py-1.5 px-2 bg-bg-surface-hover text-text-secondary text-xs rounded-lg flex items-center justify-center gap-2 hover:text-primary transition-colors"
+            >
+              {isSearchingGlobal ? "Buscando..." : "Buscar em todas as mensagens"}
+            </button>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 space-y-1 custom-scrollbar">
-          <div className="text-xs font-semibold text-text-muted px-2 py-2 mt-2">
-            Histórico
-          </div>
-          {chats
-            .filter((chat) =>
-              chat.title.toLowerCase().includes(searchQuery.toLowerCase()),
-            )
-            .map((chat) => (
-              <div
-                key={chat.id}
-                onClick={() => {
-                  setCurrentChatId(chat.id);
-                  if (window.innerWidth < 768) {
-                    setIsSidebarOpen(false);
-                  }
-                }}
+          {globalSearchResults.length > 0 ? (
+            <>
+              <div className="text-xs font-semibold text-text-muted px-2 py-2 mt-2">
+                Resultados Globais ({globalSearchResults.length})
+              </div>
+              {globalSearchResults.map((result, idx) => (
+                <div
+                  key={`global-res-${idx}`}
+                  onClick={() => {
+                    setCurrentChatId(result.chat.id);
+                    setCurrentChatOwnerId(user.uid);
+                    if (window.innerWidth < 768) {
+                      setIsSidebarOpen(false);
+                    }
+                  }}
+                  className="group flex flex-col p-2.5 rounded-lg cursor-pointer transition-all text-text-secondary hover:bg-bg-surface bg-bg-surface/50 border border-border-subtle mb-2"
+                >
+                  <span className="text-xs font-bold text-primary truncate mb-1">{result.chat.title}</span>
+                  <span className="text-xs line-clamp-2">{result.message.content}</span>
+                </div>
+              ))}
+            </>
+          ) : (
+            <>
+              <div className="text-xs font-semibold text-text-muted px-2 py-2 mt-2">
+                Histórico
+              </div>
+              {chats
+                .filter((chat) =>
+                  chat.title.toLowerCase().includes(searchQuery.toLowerCase()),
+                )
+                .map((chat) => (
+                  <div
+                    key={chat.id}
+                    onClick={() => {
+                      setCurrentChatId(chat.id);
+                      if (chat.isShared) {
+                        setCurrentChatOwnerId(chat.ownerId);
+                      } else {
+                        setCurrentChatOwnerId(user.uid);
+                      }
+                      if (window.innerWidth < 768) {
+                        setIsSidebarOpen(false);
+                      }
+                    }}
                 className={`group flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all ${currentChatId === chat.id ? "bg-bg-surface-hover text-text-primary" : "text-text-secondary hover:bg-bg-surface"}`}
               >
                 <span className="text-sm truncate flex-1">{chat.title}</span>
-                <button
-                  onClick={(e) => deleteChat(e, chat.id)}
-                  className="p-1 hover:text-red-500 text-text-muted transition-colors"
-                >
-                  <Trash2 size={16} />
-                </button>
+                {chat.isShared ? (
+                  <div className="p-1 text-green-500" title="Chat Compartilhado">
+                    <Users size={16} />
+                  </div>
+                ) : (
+                  <button
+                    onClick={(e) => deleteChat(e, chat)}
+                    className="p-1 hover:text-red-500 text-text-muted transition-colors"
+                    title="Apagar Chat"
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                )}
               </div>
             ))}
           {chats.filter((chat) =>
@@ -1761,6 +2476,8 @@ ${artifactsInstruction}`;
             <div key="no-chats-found" className="text-xs text-text-muted px-2 py-4 text-center">
               Nenhum chat encontrado.
             </div>
+          )}
+          </>
           )}
         </div>
 
@@ -1783,6 +2500,19 @@ ${artifactsInstruction}`;
             <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
             <span>{onlineUsersCount} {onlineUsersCount === 1 ? 'usuário online' : 'usuários online'}</span>
           </div>
+          {user && (
+             <div 
+               className="mt-1 px-3 py-1 flex items-center gap-2 text-[10px] text-text-muted cursor-pointer hover:text-text-primary transition-colors group"
+               onClick={() => {
+                 copyToClipboard(user.uid);
+                 toast.success("Seu ID de usuário copiado!");
+               }}
+               title="Copiar ID para colaboração"
+             >
+               <span className="truncate flex-1">ID: {user.uid}</span>
+               <Copy size={10} className="opacity-0 group-hover:opacity-100 transition-opacity" />
+             </div>
+          )}
         </div>
         </div>
       </aside>
@@ -1888,27 +2618,22 @@ ${artifactsInstruction}`;
                     themeColor={themeColor}
                     userPhoto={user?.photoURL}
                     onRegenerate={handleRegenerate}
-                    onEdit={handleEdit}
+                    onEdit={handleEditClick}
                     onBranch={handleBranch}
                     userSettings={userSettings}
                     onAnalyzeSecurity={handleAnalyzeSecurity}
+                    onAskAI={(code) => {
+                      setInput((prev) => prev + "\n" + "Por favor, me ajude a modificar ou consertar este código:\n\n```javascript\n" + code + "\n```");
+                      textareaRef.current?.focus();
+                    }}
                   />
                 ))}
-                {streamingMessage && (
-                  <MessageBubble
-                    key="streaming-message"
-                    msg={{ role: "model", content: streamingMessage }}
-                    isCodeMode={isCodeMode}
-                    themeColor={themeColor}
-                    userSettings={userSettings}
-                  />
-                )}
-                {isLoading && (
+                {(isLoading || isGenerating) && (
                   <motion.div
                     key="loading-indicator"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
-                    className="flex flex-col items-start gap-2"
+                    className="flex flex-col items-start gap-2 w-full"
                   >
                     <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-bg-surface border border-border-strong overflow-hidden shadow-lg">
                       <AILogo mode={userSettings.mode} />
@@ -1919,6 +2644,25 @@ ${artifactsInstruction}`;
                         {statusMessage || "Pensando..."}
                       </span>
                     </div>
+                    {streamingThinkContent && (
+                      <div className="mt-2 w-full max-w-3xl bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
+                        <div className="flex items-center justify-between p-2.5 bg-bg-surface-hover/50">
+                          <button 
+                            onClick={() => setIsStreamingThinkExpanded(!isStreamingThinkExpanded)}
+                            className="flex-1 flex items-center gap-2 text-sm font-medium text-text-muted hover:text-text-primary transition-colors text-left"
+                          >
+                            <Brain size={16} className={isStreamingThinkExpanded ? "text-primary" : ""} />
+                            <span>Processo de pensamento</span>
+                            {isStreamingThinkExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                          </button>
+                        </div>
+                        {isStreamingThinkExpanded && (
+                          <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary italic whitespace-pre-wrap font-mono leading-relaxed">
+                            {streamingThinkContent}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </div>
@@ -1973,31 +2717,73 @@ ${artifactsInstruction}`;
               </div>
             )}
             <div className="flex flex-col gap-2 w-full">
+              {editingMessageId && (
+                <div className="flex items-center justify-between bg-bg-surface-hover border border-border-strong rounded-2xl px-4 py-2 mx-1 shadow-sm">
+                  <div className="flex items-center gap-2 text-primary font-medium">
+                    <Edit2 size={16} />
+                    <span>Editando mensagem</span>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setEditingMessageId(null);
+                      setInput("");
+                      setAttachments([]);
+                    }}
+                    className="p-1 hover:bg-bg-surface rounded-full text-text-muted hover:text-text-primary transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
               {/* Attachments Preview */}
-              {attachments.length > 0 && (
+              {(attachments.length > 0 || screenStream) && (
                 <div className="flex flex-wrap gap-2 p-3 bg-bg-surface rounded-2xl border border-border-subtle shadow-sm mx-1">
+                  {screenStream && (
+                    <div className="relative group flex items-center gap-2 bg-bg-surface-hover rounded-xl border border-emerald-500/30 pr-3 overflow-hidden">
+                      <video
+                        ref={screenVideoRef}
+                        autoPlay
+                        muted
+                        className="h-12 w-20 object-cover bg-black"
+                      />
+                      <div className="flex flex-col py-1">
+                        <span className="text-xs font-bold text-emerald-400">Tela Compartilhada</span>
+                        <span className="text-[10px] text-text-muted">A IA verá sua tela</span>
+                      </div>
+                      <button
+                        onClick={toggleScreenShare}
+                        className="absolute top-1 right-1 p-1 bg-black/50 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-500"
+                        title="Parar de compartilhar"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
                   {attachments.map((att, idx) => (
-                    <div key={`att-${idx}`} className="relative group">
+                    <div key={`att-${idx}`} className="relative group flex items-center gap-2 bg-bg-surface-hover rounded-xl border border-border-strong pr-3">
                       {att.mimeType.startsWith("image/") ? (
                         <img
                           src={att.dataUrl}
                           alt="attachment"
-                          className="h-16 w-16 object-cover rounded-xl border border-border-strong"
+                          className="h-12 w-12 object-cover rounded-l-xl"
                         />
                       ) : (
-                        <div className="h-16 w-16 flex items-center justify-center bg-bg-surface-hover rounded-xl border border-border-strong">
-                          <File size={24} className="text-text-muted" />
+                        <div className="h-12 w-12 flex items-center justify-center bg-bg-surface-hover rounded-l-xl border-r border-border-strong">
+                          <File size={20} className="text-text-muted" />
                         </div>
                       )}
+                      <span className="text-xs font-medium text-text-primary max-w-[120px] truncate">
+                        {att.file?.name || (att.mimeType.startsWith("image/") ? "Imagem" : "Arquivo")}
+                      </span>
                       <button
                         onClick={() =>
                           setAttachments((prev) =>
                             prev.filter((_, i) => i !== idx),
                           )
                         }
-                        className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow-md"
+                        className="ml-1 p-1 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-full transition-colors"
                       >
-                        <X size={12} />
+                        <X size={14} />
                       </button>
                     </div>
                   ))}
@@ -2043,12 +2829,13 @@ ${artifactsInstruction}`;
                   <div className="relative shrink-0 mb-0.5 ml-1">
                     <button
                       onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f] transition-colors"
+                      disabled={currentUserRole === "view"}
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Plus size={24} strokeWidth={1.5} />
                     </button>
                     
-                    {isAttachmentMenuOpen && (
+                    {isAttachmentMenuOpen && currentUserRole !== "view" && (
                       <div key="attachment-menu" className="absolute bottom-full left-0 mb-2 w-48 bg-bg-surface border border-border-subtle rounded-xl shadow-xl py-1 z-10">
                         <button
                           key="btn-image"
@@ -2084,8 +2871,24 @@ ${artifactsInstruction}`;
                           <Gamepad2 size={16} /> Criar jogos
                         </button>
                         <button
+                          key="btn-slides"
+                          onClick={() => {
+                            setInput(
+                              (prev) =>
+                                prev +
+                                (prev.length > 0 ? " " : "") +
+                                "Crie uma apresentação de slides (slider) interativa em código sobre: ",
+                            );
+                            setIsAttachmentMenuOpen(false);
+                            textareaRef.current?.focus();
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                        >
+                          <Presentation size={16} /> Criar Slides
+                        </button>
+                        <button
                           key="btn-photos"
-                          onClick={() => fileInputRef.current?.click()}
+                          onClick={() => photoInputRef.current?.click()}
                           className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
                         >
                           <Image size={16} /> Fotos
@@ -2104,6 +2907,19 @@ ${artifactsInstruction}`;
                         >
                           <File size={16} /> Arquivos
                         </button>
+                        <button
+                          key="btn-screen"
+                          onClick={() => {
+                            toggleScreenShare();
+                            setIsAttachmentMenuOpen(false);
+                          }}
+                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors border-t border-border-subtle mt-1 pt-2"
+                        >
+                          {screenStream ? <MonitorOff size={16} className="text-red-400" /> : <MonitorUp size={16} className="text-emerald-400" />}
+                          <span className={screenStream ? "text-red-400" : "text-emerald-400"}>
+                            {screenStream ? "Parar de Compartilhar" : "Compartilhar Tela"}
+                          </span>
+                        </button>
                       </div>
                     )}
                   </div>
@@ -2114,7 +2930,15 @@ ${artifactsInstruction}`;
                     onChange={handleFileSelect}
                     className="hidden"
                     multiple
-                    accept="image/*,application/pdf,text/plain"
+                    accept="application/pdf,text/plain"
+                  />
+                  <input
+                    type="file"
+                    ref={photoInputRef}
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    multiple
+                    accept="image/*"
                   />
                   <input
                     type="file"
@@ -2133,16 +2957,17 @@ ${artifactsInstruction}`;
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                         e.preventDefault();
-                        handleSend();
+                        if (!isGenerating && currentUserRole !== "view") handleSend();
                       }
                     }}
-                    placeholder="Pergunte ao Dev AI..."
-                    className="w-full bg-transparent border-none text-white text-[16px] py-3 px-4 focus:ring-0 resize-none min-h-[44px] max-h-[120px] placeholder:text-[#a1a1aa] custom-scrollbar"
+                    placeholder={currentUserRole === "view" ? "Você pode apenas ler este chat." : "Pergunte ao Dev AI..."}
+                    className="w-full bg-transparent border-none text-white text-[16px] py-3 px-4 focus:ring-0 resize-none min-h-[44px] max-h-[120px] placeholder:text-[#a1a1aa] custom-scrollbar disabled:opacity-50"
                     rows={1}
+                    disabled={currentUserRole === "view"}
                   />
                   
                   <div className="flex items-center gap-1 shrink-0 mb-0.5 pr-1">
-                    {isGenerating ? (
+                    {isGenerating || isLoading ? (
                       <button
                         onClick={stopGeneration}
                         className="w-10 h-10 rounded-full flex items-center justify-center bg-red-500 text-white hover:bg-red-600 transition-all"
@@ -2152,16 +2977,17 @@ ${artifactsInstruction}`;
                     ) : input.trim() || attachments.length > 0 ? (
                       <button
                         onClick={handleSend}
-                        disabled={isLoading}
-                        className="w-10 h-10 rounded-full flex items-center justify-center bg-white text-black hover:bg-gray-200 transition-all"
+                        disabled={isLoading || currentUserRole === "view"}
+                        className="w-10 h-10 rounded-full flex items-center justify-center bg-white text-black hover:bg-gray-200 transition-all disabled:opacity-50 disabled:bg-gray-600"
                       >
                         <ArrowUp size={20} strokeWidth={2} />
                       </button>
                     ) : (
                       <button
                         onClick={handleListen}
+                        disabled={currentUserRole === "view"}
                         className={cn(
-                          "w-10 h-10 rounded-full flex items-center justify-center transition-colors",
+                          "w-10 h-10 rounded-full flex items-center justify-center transition-colors disabled:opacity-50",
                           isListening ? "text-red-500 bg-red-500/10" : "text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f]"
                         )}
                       >
@@ -2187,6 +3013,41 @@ ${artifactsInstruction}`;
           onLogout={handleLogout}
           onClearHistory={clearAllChats}
           logs={logs}
+        />
+      )}
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={isShareModalOpen}
+        onClose={() => setIsShareModalOpen(false)}
+        chatId={currentChatId || ""}
+        ownerId={currentChatOwnerId || user?.uid || ""}
+        isOwner={currentChatOwnerId === user?.uid || !currentChatOwnerId}
+      />
+
+      {/* Paste Modal */}
+      {pasteModalText && (
+        <PasteModal
+          text={pasteModalText}
+          onClose={() => setPasteModalText(null)}
+          onPasteAsFile={async (text) => {
+            const blob = new Blob([text], { type: "text/plain" });
+            const file = new window.File([blob], "texto_colado.txt", { type: "text/plain" });
+            const reader = new FileReader();
+            const dataUrl = await new Promise<string>((resolve) => {
+              reader.onload = (ev) => resolve(ev.target?.result as string);
+              reader.readAsDataURL(file);
+            });
+            setAttachments((prev) => [
+              ...prev,
+              { file, dataUrl, mimeType: "text/plain" },
+            ]);
+            setPasteModalText(null);
+          }}
+          onPasteInInput={(text) => {
+            setInput((prev) => prev + text);
+            setPasteModalText(null);
+          }}
         />
       )}
 

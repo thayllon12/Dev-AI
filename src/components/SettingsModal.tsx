@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2 } from "lucide-react";
+import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2, Volume2 } from "lucide-react";
 import { cn } from "../lib/utils";
 
 interface SettingsModalProps {
@@ -118,6 +118,68 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Sua chave personalizada está sendo usada para todas as requisições.
               </p>
             )}
+          </div>
+
+          {/* Themes Section */}
+          <div className="pt-4 border-t border-border-strong">
+            <label className="block text-sm font-bold text-text-secondary mb-3 uppercase tracking-wider flex items-center gap-2">
+              <Palette size={16} />
+              Aparência e Tema
+            </label>
+            <div className="space-y-4">
+              <div>
+                <span className="text-xs font-semibold text-text-muted mb-2 block">Tema Principal</span>
+                <div className="flex gap-2 p-1 bg-bg-surface rounded-xl border border-border-subtle inline-flex">
+                  {[
+                    { id: "light", icon: <Sun size={14} />, label: "Claro" },
+                    { id: "dark", icon: <Moon size={14} />, label: "Escuro" },
+                    { id: "auto", icon: <Monitor size={14} />, label: "Sistema" },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => updateSetting("theme", t.id)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all",
+                        currentSettings.theme === t.id
+                          ? "bg-bg-code-header text-text-primary shadow-sm"
+                          : "text-text-muted hover:text-text-primary"
+                      )}
+                    >
+                      {t.icon}
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <span className="text-xs font-semibold text-text-muted mb-2 block">Cor de Destaque</span>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: "auto", color: "bg-gradient-to-r from-blue-500 to-purple-500", label: "Auto" },
+                    { id: "blue", color: "bg-blue-500", label: "Azul" },
+                    { id: "red", color: "bg-red-500", label: "Vermelho" },
+                    { id: "green", color: "bg-emerald-500", label: "Verde" },
+                    { id: "purple", color: "bg-purple-500", label: "Roxo" },
+                    { id: "black", color: "bg-gray-800", label: "Preto" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => updateSetting("colorTheme", c.id)}
+                      className={cn(
+                        "flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold transition-all",
+                        currentSettings.colorTheme === c.id
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border-subtle bg-bg-surface text-text-muted hover:bg-bg-surface-hover"
+                      )}
+                    >
+                      <div className={cn("w-3 h-3 rounded-full", c.color)} />
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Toggles Section */}
@@ -247,11 +309,74 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="bg-bg-surface px-4 py-3 border-b border-border-strong flex items-center justify-between">
                   <h4 className="font-bold text-sm text-text-primary flex items-center gap-2">
                     <Code2 size={16} className="text-primary" />
-                    Console Dev / Logs
+                    Console Dev / Configurações Avançadas
                   </h4>
                   <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold uppercase tracking-wider">
                     Modo Desenvolvedor
                   </span>
+                </div>
+                <div className="p-4 border-b border-border-strong bg-bg-surface/50">
+                  <label className="block text-sm font-bold text-text-secondary mb-2">
+                    Provedor de IA
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => updateSetting("aiProvider", "gemini")}
+                      className={cn(
+                        "flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all border",
+                        currentSettings.aiProvider === "gemini" || !currentSettings.aiProvider
+                          ? "bg-primary text-white border-primary"
+                          : "bg-bg-surface border-border-strong text-text-secondary hover:bg-bg-surface-hover"
+                      )}
+                    >
+                      Google Gemini
+                    </button>
+                    <button
+                      onClick={() => updateSetting("aiProvider", "chatgpt")}
+                      className={cn(
+                        "flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all border",
+                        currentSettings.aiProvider === "chatgpt"
+                          ? "bg-emerald-500 text-white border-emerald-500"
+                          : "bg-bg-surface border-border-strong text-text-secondary hover:bg-bg-surface-hover"
+                      )}
+                    >
+                      ChatGPT (OpenAI)
+                    </button>
+                  </div>
+                  {currentSettings.aiProvider === "chatgpt" && (
+                    <div className="mt-4">
+                      <label className="block text-xs font-bold text-text-secondary mb-1">
+                        OpenAI API Key
+                      </label>
+                      <input
+                        type="password"
+                        value={currentSettings.openAiKey || ""}
+                        onChange={(e) => updateSetting("openAiKey", e.target.value)}
+                        placeholder="sk-proj-..."
+                        className="w-full bg-bg-surface border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
+                      />
+                      <p className="text-[10px] text-text-muted mt-1">
+                        Deixe em branco para usar a chave padrão (que pode estar sem cota).
+                      </p>
+                    </div>
+                  )}
+                  {currentSettings.aiProvider === "gemini" && (
+                    <div className="mt-4">
+                      <label className="block text-xs font-bold text-text-secondary mb-1">
+                        Gemini API Key
+                      </label>
+                      <input
+                        type="password"
+                        value={currentSettings.geminiApiKey || ""}
+                        onChange={(e) => updateSetting("geminiApiKey", e.target.value)}
+                        placeholder="AIzaSy..."
+                        className="w-full bg-bg-surface border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                      />
+                      <p className="text-[10px] text-text-muted mt-1">
+                        Necessário se você estiver usando o app fora do AI Studio (ex: GitHub Pages).
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <div className="bg-[#0d0d0d] p-4 h-64 overflow-y-auto font-mono text-xs custom-scrollbar">
                   {logs.length === 0 ? (

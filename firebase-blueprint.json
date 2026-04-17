@@ -40,6 +40,11 @@
         "uid": { "type": "string" },
         "title": { "type": "string" },
         "mode": { "type": "string", "enum": ["Dev AI", "Dev AI Code"] },
+        "isPublic": { "type": "boolean" },
+        "collaborators": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },

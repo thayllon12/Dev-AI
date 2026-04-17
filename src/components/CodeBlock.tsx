@@ -23,12 +23,14 @@ export function CodeBlock({
   userSettings,
   fullMessageContent,
   onAnalyzeSecurity,
+  onAskAI,
 }: {
   language: string;
   code: string;
   userSettings: any;
   fullMessageContent?: string;
   onAnalyzeSecurity?: (code: string) => void;
+  onAskAI?: (code: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -43,20 +45,33 @@ export function CodeBlock({
 
   const handleDownload = async () => {
     try {
+      let useFallback = false;
       if ('showSaveFilePicker' in window) {
-        const handle = await (window as any).showSaveFilePicker({
-          suggestedName: `code_${Date.now()}.${language || "txt"}`,
-          types: [
-            {
-              description: 'Code file',
-              accept: { 'text/plain': [`.${language || "txt"}`] },
-            },
-          ],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(code);
-        await writable.close();
+        try {
+          const handle = await (window as any).showSaveFilePicker({
+            suggestedName: `code_${Date.now()}.${language || "txt"}`,
+            types: [
+              {
+                description: 'Code file',
+                accept: { 'text/plain': [`.${language || "txt"}`] },
+              },
+            ],
+          });
+          const writable = await handle.createWritable();
+          await writable.write(code);
+          await writable.close();
+        } catch (err: any) {
+          if (err.name === 'AbortError') {
+            return; // User cancelled
+          }
+          console.warn("showSaveFilePicker failed, using fallback:", err);
+          useFallback = true;
+        }
       } else {
+        useFallback = true;
+      }
+
+      if (useFallback) {
         const filename = prompt("Nome do arquivo:", `code_${Date.now()}.${language || "txt"}`);
         if (!filename) return;
         const blob = new Blob([code], { type: "text/plain" });
@@ -65,6 +80,7 @@ export function CodeBlock({
         a.href = url;
         a.download = filename;
         a.click();
+        URL.revokeObjectURL(url);
       }
     } catch (err) {
       console.error("Failed to save file", err);
@@ -80,6 +96,7 @@ export function CodeBlock({
             language={language}
             onClose={() => setIsFullscreen(false)}
             fullMessageContent={fullMessageContent}
+            onAskAI={onAskAI}
           />
         )}
         <div
@@ -120,6 +137,7 @@ export function CodeBlock({
           language={language}
           onClose={() => setIsFullscreen(false)}
           fullMessageContent={fullMessageContent}
+          onAskAI={onAskAI}
         />
       )}
       <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong">
@@ -137,7 +155,7 @@ export function CodeBlock({
                 className="flex items-center gap-1.5 hover:text-green-400 transition-colors text-green-500 font-bold"
               >
                 <Play size={14} />
-                Jogar
+                Preview / Jogar
               </button>
             )}
             <button

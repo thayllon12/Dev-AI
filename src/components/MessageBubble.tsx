@@ -2,10 +2,13 @@ import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
-import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp } from "lucide-react";
+import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp, Archive } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { FilePreviewModal } from "./FilePreviewModal";
 import { AILogo } from "./AILogo";
 import { copyToClipboard, guessLanguage } from "../lib/utils";
+import { FileText } from "lucide-react";
+import JSZip from "jszip";
 
 interface MessageBubbleProps {
   msg: any;
@@ -13,10 +16,11 @@ interface MessageBubbleProps {
   themeColor: string;
   userPhoto?: string | null;
   onRegenerate?: (msg: any) => void;
-  onEdit?: (msg: any, newContent: string) => void;
+  onEdit?: (msg: any) => void;
   onBranch?: (msg: any) => void;
   userSettings: any;
   onAnalyzeSecurity?: (code: string) => void;
+  onAskAI?: (code: string) => void;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
@@ -29,14 +33,14 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   onBranch,
   userSettings,
   onAnalyzeSecurity,
+  onAskAI,
 }) => {
   const isUser = msg.role === "user";
   const [copied, setCopied] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-  const [editContent, setEditContent] = useState(msg.content);
   const [showActions, setShowActions] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [showSelectText, setShowSelectText] = useState(false);
+  const [previewFile, setPreviewFile] = useState<{ dataUrl: string; mimeType: string } | null>(null);
   const [isThinkExpanded, setIsThinkExpanded] = useState(false);
   const [isThinkVisible, setIsThinkVisible] = useState(true);
 
@@ -52,13 +56,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     await copyToClipboard(msg.content);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleSaveEdit = () => {
-    if (onEdit && editContent.trim() !== msg.content) {
-      onEdit(msg, editContent);
-    }
-    setIsEditing(false);
   };
 
   const handleDownloadImage = (url: string) => {
@@ -92,6 +89,42 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     }
   };
 
+  const handleDownloadProject = async () => {
+    const codeBlocks: { language: string; code: string }[] = [];
+    const regex = /```(\w+)?\n([\s\S]*?)```/g;
+    let match;
+    while ((match = regex.exec(msg.content)) !== null) {
+      codeBlocks.push({
+        language: match[1] || "txt",
+        code: match[2].trim(),
+      });
+    }
+
+    if (codeBlocks.length === 0) return;
+
+    const zip = new JSZip();
+    codeBlocks.forEach((block, index) => {
+      // Try to guess a filename if not provided in the comment
+      let filename = `file_${index + 1}.${block.language}`;
+      const firstLine = block.code.split('\n')[0];
+      if (firstLine.startsWith('//') || firstLine.startsWith('/*') || firstLine.startsWith('<!--')) {
+        const potentialName = firstLine.replace(/[\/\*<!>\-]/g, '').trim();
+        if (potentialName.includes('.')) {
+          filename = potentialName;
+        }
+      }
+      zip.file(filename, block.code);
+    });
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `project-${Date.now()}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   let thinkContent = "";
   let mainContent = msg.content || "";
 
@@ -108,6 +141,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
       }
     }
   }
+
+  const hasCodeBlocks = /```(\w+)?\n([\s\S]*?)```/g.test(msg.content);
 
   return (
     <>
@@ -146,10 +181,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           }`}
         >
           {isUser ? (
-            userPhoto ? (
+            msg.authorPhoto ? (
+              <img src={msg.authorPhoto} alt={msg.authorName || "User"} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+            ) : userPhoto ? (
               <img src={userPhoto} alt="User" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
-              <div className="text-sm font-bold">U</div>
+              <div className="text-sm font-bold">{msg.authorName ? msg.authorName.charAt(0).toUpperCase() : "U"}</div>
             )
           ) : (
             <AILogo mode={userSettings.mode} />
@@ -159,7 +196,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         <div className={`flex flex-col max-w-full ${isUser ? "items-end" : "items-start"}`}>
           <div className="flex items-center gap-2 mb-1 px-1">
             <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
-              {isUser ? "Você" : "Dev AI"}
+              {isUser ? (msg.authorName || "Você") : "Dev AI"}
             </span>
           </div>
 
@@ -168,33 +205,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               isUser ? "text-text-primary" : "text-text-primary"
             }`}
           >
-          {isEditing ? (
-            <div className="flex flex-col gap-3 min-w-[300px]">
-              <textarea
-                value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
-                className="w-full bg-bg-surface border border-border-strong rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-none min-h-[100px]"
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setIsEditing(false);
-                    setEditContent(msg.content);
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold hover:bg-bg-surface-hover rounded-lg transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleSaveEdit}
-                  className="px-3 py-1.5 text-xs font-bold bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors"
-                >
-                  Salvar
-                </button>
-              </div>
-            </div>
-          ) : (
             <div className="flex flex-col gap-3">
               {thinkContent && isThinkVisible && (
                 <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
@@ -242,6 +252,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                             userSettings={userSettings}
                             fullMessageContent={msg.content}
                             onAnalyzeSecurity={onAnalyzeSecurity}
+                            onAskAI={onAskAI}
                           />
                         );
                       }
@@ -270,6 +281,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                         {children}
                       </blockquote>
                     ),
+                    a: ({ href, children }) => {
+                      if (href?.startsWith('blob:') && String(children).includes('VIDEO_BLOB')) {
+                        return <video controls src={href} className="max-w-full rounded-xl border border-border-strong shadow-lg my-4" />;
+                      }
+                      if (href?.startsWith('blob:') && String(children).includes('AUDIO_BLOB')) {
+                        return <audio controls src={href} className="w-full my-4" />;
+                      }
+                      return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>;
+                    },
                     img: ({ src, alt }) => {
                       if (!src) return null;
                       const isGeneratedImage = src.startsWith("data:image");
@@ -305,27 +325,41 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 </ReactMarkdown>
               </div>
             </div>
-          )}
-        </div>
+          </div>
 
           {/* Attachments */}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-white/10">
-              {msg.attachments.map((att: any, idx: number) => (
-                <div key={idx} className="relative group/att rounded-lg overflow-hidden border border-white/20 shadow-lg">
-                  <img src={att.dataUrl} alt="Attachment" className="w-24 h-24 object-cover" referrerPolicy="no-referrer" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/att:opacity-100 transition-opacity flex items-center justify-center">
-                    <button
-                      onClick={() => handleDownloadImage(att.dataUrl)}
-                      className="p-1.5 bg-white text-black rounded-full hover:scale-110 transition-transform"
-                      title="Baixar Anexo"
-                      aria-label="Baixar Anexo"
-                    >
-                      <Download size={14} />
-                    </button>
+              {msg.attachments.map((att: any, idx: number) => {
+                const isImage = att.mimeType.startsWith("image/");
+                return (
+                  <div key={idx} className="relative group/att rounded-lg overflow-hidden border border-white/20 shadow-lg cursor-pointer" onClick={() => setPreviewFile({ dataUrl: att.dataUrl, mimeType: att.mimeType })}>
+                    {isImage ? (
+                      <img src={att.dataUrl} alt="Attachment" className="w-24 h-24 object-cover" referrerPolicy="no-referrer" />
+                    ) : (
+                      <div className="w-24 h-24 bg-white/5 flex flex-col items-center justify-center gap-2">
+                        <FileText size={24} className="text-white/70" />
+                        <span className="text-[10px] text-white/50 uppercase truncate w-full px-2 text-center">
+                          {att.mimeType.split("/")[1] || "FILE"}
+                        </span>
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/att:opacity-100 transition-opacity flex items-center justify-center">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownloadImage(att.dataUrl);
+                        }}
+                        className="p-1.5 bg-white text-black rounded-full hover:scale-110 transition-transform"
+                        title="Baixar Anexo"
+                        aria-label="Baixar Anexo"
+                      >
+                        <Download size={14} />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
 
@@ -389,7 +423,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   {isUser && onEdit && (
                     <button
                       onClick={() => {
-                        setIsEditing(true);
+                        onEdit(msg);
                         setShowActions(false);
                       }}
                       className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
@@ -425,6 +459,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     </button>
                   )}
 
+                  {!isUser && hasCodeBlocks && (
+                    <button
+                      onClick={() => {
+                        handleDownloadProject();
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <Archive size={16} />
+                      <span>Baixar Projeto (ZIP)</span>
+                    </button>
+                  )}
+
                   <button
                     onClick={() => {
                       handleDownloadText();
@@ -441,6 +488,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           </div>
         </div>
       </motion.div>
+
+      {previewFile && (
+        <FilePreviewModal
+          isOpen={!!previewFile}
+          onClose={() => setPreviewFile(null)}
+          dataUrl={previewFile.dataUrl}
+          mimeType={previewFile.mimeType}
+        />
+      )}
     </>
   );
 }, (prevProps, nextProps) => {
