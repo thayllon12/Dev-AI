@@ -52,8 +52,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     };
   }, [isPlaying]);
 
+  const getCleanText = (text: string) => {
+    let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+    clean = clean.replace(/(\*\*|__)(.*?)\1/g, '$2');
+    clean = clean.replace(/(\*|_)(.*?)\1/g, '$2');
+    clean = clean.replace(/^#+\s+/gm, '');
+    clean = clean.replace(/```[a-z]*\n([\s\S]*?)```/g, '\n$1\n');
+    clean = clean.replace(/`([^`]+)`/g, '$1');
+    return clean.trim();
+  };
+
   const handleCopy = async () => {
-    await copyToClipboard(msg.content);
+    await copyToClipboard(getCleanText(msg.content));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -68,7 +78,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   };
 
   const handleDownloadText = () => {
-    const blob = new Blob([msg.content], { type: "text/plain" });
+    const blob = new Blob([getCleanText(msg.content)], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -81,7 +91,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
       window.speechSynthesis.cancel();
       setIsPlaying(false);
     } else {
-      const utterance = new SpeechSynthesisUtterance(msg.content);
+      const utterance = new SpeechSynthesisUtterance(getCleanText(msg.content));
       utterance.lang = 'pt-BR';
       utterance.onend = () => setIsPlaying(false);
       window.speechSynthesis.speak(utterance);
@@ -202,10 +212,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
 
           <div
             className={`relative group transition-all duration-300 w-full break-words ${
-              isUser ? "text-text-primary" : "text-text-primary"
+              isUser ? "text-text-primary flex justify-end" : "text-text-primary"
             }`}
           >
-            <div className="flex flex-col gap-3">
+            <div className={`flex flex-col gap-3 ${isUser ? "max-w-[85%]" : "w-full"}`}>
               {thinkContent && isThinkVisible && (
                 <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
                   <div className="flex items-center justify-between p-2.5 bg-bg-surface-hover/50">
@@ -235,8 +245,16 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   )}
                 </div>
               )}
-              <div className="markdown-body">
-                <ReactMarkdown
+              
+              {isUser ? (
+                <div className="bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left">
+                  <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
+                    {msg.content}
+                  </div>
+                </div>
+              ) : (
+                <div className="markdown-body">
+                  <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
                     pre: ({ node, children, ...props }: any) => {
@@ -324,6 +342,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   {mainContent}
                 </ReactMarkdown>
               </div>
+              )}
             </div>
           </div>
 

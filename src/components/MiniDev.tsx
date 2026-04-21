@@ -1,7 +1,8 @@
 import React, { useState, useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Bot, X, Mic, MicOff, MessageSquare } from "lucide-react";
+import { Bot, X, Mic, MicOff, MessageSquare, PictureInPicture } from "lucide-react";
 import { cn } from "../lib/utils";
+import { toast } from "sonner";
 
 interface MiniDevProps {
   onClose: () => void;
@@ -13,15 +14,57 @@ interface MiniDevProps {
 
 export function MiniDev({ onClose, isListening, onListenToggle, isGenerating, statusMessage }: MiniDevProps) {
   const [isExpanded, setIsExpanded] = useState(false);
-  const constraintsRef = useRef(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Auto expand when generating
   useEffect(() => {
     if (isGenerating) setIsExpanded(true);
   }, [isGenerating]);
 
+  const handlePiP = async () => {
+    if (!('documentPictureInPicture' in window)) {
+      toast.error("O recurso Picture-in-Picture não é suportado pelo seu navegador atual. Use o Chrome ou o Edge no Computador.");
+      return;
+    }
+
+    try {
+      // @ts-ignore
+      const pipWindow = await window.documentPictureInPicture.requestWindow({
+        width: 300,
+        height: 400,
+      });
+
+      pipWindow.document.body.style.margin = "0";
+      pipWindow.document.body.style.backgroundColor = "#0e1116"; // match theme
+      
+      const pipContainer = pipWindow.document.createElement('div');
+      pipContainer.id = "pip-root";
+      pipWindow.document.body.append(pipContainer);
+
+      // We instruct the user how to deal with this, technically rendering React inside Pip is complex 
+      // without portals, so we'll just show a simplified UI in pure JS for the PIP or a Toast info
+      pipContainer.innerHTML = `
+        <div style="color: white; font-family: sans-serif; padding: 20px; text-align: center;">
+          <h2>Dev AI - Modo PiP</h2>
+          <p>O App está acompanhando sua tela no fundo.</p>
+          <p style="color: #4ade80;">Conexão ativa.</p>
+        </div>
+      `;
+
+      pipWindow.addEventListener("pagehide", (event: any) => {
+        // Pip closed
+      });
+      
+      toast.success("O mini player foi aberto sobre a tela!");
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Erro ao tentar abrir no modo Janela Flutuante.");
+    }
+  };
+
   return (
     <motion.div
+      ref={containerRef}
       drag
       dragConstraints={{ left: 0, top: 0, right: window.innerWidth - 300, bottom: window.innerHeight - 100 }}
       dragElastic={0.1}
@@ -80,6 +123,14 @@ export function MiniDev({ onClose, isListening, onListenToggle, isGenerating, st
       </AnimatePresence>
 
       <div className="flex items-center gap-2 relative">
+        <button
+          onClick={handlePiP}
+          title="Destacar para fora do Navegador (Picture-in-Picture)"
+          className="w-10 h-10 bg-bg-surface hover:bg-bg-surface-hover border border-border-strong rounded-full shadow-lg flex items-center justify-center text-text-muted hover:text-primary transition-all relative group"
+        >
+          <PictureInPicture size={18} />
+        </button>
+
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           className="w-12 h-12 bg-bg-surface hover:bg-bg-surface-hover border border-border-strong rounded-full shadow-lg flex items-center justify-center text-text-primary transition-all relative group"

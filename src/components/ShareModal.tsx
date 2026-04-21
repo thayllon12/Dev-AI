@@ -23,7 +23,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 }) => {
   const [colabEmail, setColabEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [collaborators, setCollaborators] = useState<{ uid: string; email: string; role?: string }[]>([]);
+  const [collaborators, setCollaborators] = useState<{ uid: string; email: string; name: string; photoURL: string; role?: string }[]>([]);
   const [isPublic, setIsPublic] = useState(false);
 
   const shareUrl = `${window.location.origin}${window.location.pathname}?chatId=${chatId}&ownerId=${ownerId}`;
@@ -42,9 +42,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               const collabDetails = await Promise.all(
                 data.collaborators.map(async (uid: string) => {
                   const userSnap = await getDoc(doc(db, "users", uid));
+                  const userData = userSnap.exists() ? userSnap.data() : {};
                   return {
                     uid,
-                    email: userSnap.exists() ? userSnap.data().email || "Email desconhecido" : "Usuário não encontrado",
+                    email: userData.email || "Email desconhecido",
+                    name: userData.displayName || "Usuário",
+                    photoURL: userData.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.displayName || "User")}&background=random`,
                     role: data.collaboratorRoles?.[uid] || "edit"
                   };
                 })
@@ -303,8 +306,17 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                     </h3>
                     <div className="space-y-2 max-h-32 overflow-y-auto custom-scrollbar pr-2">
                       {collaborators.map((collab) => (
-                        <div key={collab.uid} className="flex items-center justify-between p-2 rounded-lg bg-bg-base border border-border-subtle gap-2">
-                          <span className="text-sm text-text-primary truncate flex-1">{collab.email}</span>
+                        <div key={collab.uid} className="flex items-center justify-between p-2 rounded-lg bg-bg-base border border-border-subtle gap-3">
+                          <img 
+                            src={collab.photoURL} 
+                            alt={collab.name} 
+                            className="w-8 h-8 rounded-full border border-border-subtle object-cover"
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium text-text-primary truncate">{collab.name}</p>
+                            <p className="text-xs text-text-muted truncate">{collab.email}</p>
+                          </div>
                           {isOwner && (
                             <div className="flex items-center gap-2">
                               <select

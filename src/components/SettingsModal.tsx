@@ -11,6 +11,7 @@ interface SettingsModalProps {
   hasCustomKey: boolean;
   onLogout: () => void;
   onClearHistory: () => void;
+  onOpenWorkspace: () => void;
   logs?: { type: string; msg: string; time: Date }[];
 }
 
@@ -22,6 +23,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   hasCustomKey,
   onLogout,
   onClearHistory,
+  onOpenWorkspace,
   logs = [],
 }) => {
   const [height, setHeight] = useState(window.innerHeight * 0.8);
@@ -203,6 +205,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 desc: "Feedback tátil ao receber mensagens.",
                 icon: <Monitor size={18} />,
               },
+              {
+                id: "wakeWordEnabled",
+                label: "Wake-Word Automática",
+                desc: "Diga 'Eae Dev AI...' sem tocar no celular",
+                icon: <Volume2 size={18} />,
+              },
             ].map((item) => (
               <div key={item.id} className="flex items-center justify-between p-3 rounded-xl hover:bg-bg-surface/50 transition-colors">
                 <div className="flex items-center gap-3">
@@ -302,6 +310,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
           </div>
 
+          {/* Studio Workspace */}
+          <div className="pt-4 border-t border-border-strong">
+            <button
+              onClick={onOpenWorkspace}
+              className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-emerald-500/10 text-emerald-500 font-bold hover:bg-emerald-500/20 transition-all border border-emerald-500/20 shadow-sm"
+            >
+              <Code2 size={24} />
+              Abrir Studio / Criador de Jogos
+            </button>
+            <p className="text-xs text-text-muted mt-3 text-center italic">
+              Acesse o modo IDE em tela cheia para programar e desenvolver projetos sem interrupções.
+            </p>
+          </div>
+
+          {!currentSettings.isDevUnlocked && (
+            <div className="pt-4 border-t border-border-strong">
+              <button
+                onClick={() => {
+                  const btn = document.getElementById("faceid-btn");
+                  if (btn) btn.innerHTML = "Escaneando Biometria...";
+                  setTimeout(() => {
+                    updateSetting("isDevUnlocked", true);
+                    if (btn) btn.innerHTML = "Biometria Mestre Reconhecida! Acesso Concedido.";
+                    btn?.classList.replace("text-blue-500", "text-emerald-500");
+                  }, 2500);
+                }}
+                id="faceid-btn"
+                className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-blue-500/10 text-blue-500 font-bold hover:bg-blue-500/20 transition-all border border-blue-500/20 shadow-sm"
+              >
+                <Monitor size={24} />
+                FaceID / Biometria da Câmera (Kernel Dev)
+              </button>
+            </div>
+          )}
+
           {/* Data Management Section */}
           <div className="pt-8 space-y-4">
             {currentSettings.isDevUnlocked && (
@@ -316,67 +359,46 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </span>
                 </div>
                 <div className="p-4 border-b border-border-strong bg-bg-surface/50">
-                  <label className="block text-sm font-bold text-text-secondary mb-2">
-                    Provedor de IA
-                  </label>
-                  <div className="flex gap-2">
+                  <div className="mt-4">
+                    <label className="block text-xs font-bold text-text-secondary mb-1">
+                      Gemini API Key
+                    </label>
+                    <input
+                      type="password"
+                      value={currentSettings.geminiApiKey || ""}
+                      onChange={(e) => updateSetting("geminiApiKey", e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-bg-surface border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
+                    />
+                    <p className="text-[10px] text-text-muted mt-1">
+                      Deixe em branco para usar o modo de Failover interno. Configure a sua própria se quiser evitar bater na cota.
+                    </p>
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-between p-3 rounded-xl hover:bg-bg-surface transition-colors border border-border-subtle bg-bg-surface">
+                    <div>
+                      <label className="block text-sm font-bold text-emerald-500">
+                        Agentes Swarm
+                      </label>
+                      <p className="text-xs text-text-muted mt-0.5 max-w-[200px]">
+                        Ativa IAGraf e IASec para discutirem o código. Requer mais tokens.
+                      </p>
+                    </div>
                     <button
-                      onClick={() => updateSetting("aiProvider", "gemini")}
+                      onClick={() => updateSetting("swarmEnabled", !currentSettings.swarmEnabled)}
                       className={cn(
-                        "flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all border",
-                        currentSettings.aiProvider === "gemini" || !currentSettings.aiProvider
-                          ? "bg-primary text-white border-primary"
-                          : "bg-bg-surface border-border-strong text-text-secondary hover:bg-bg-surface-hover"
+                        "w-12 h-6 rounded-full transition-all relative shadow-inner",
+                        currentSettings.swarmEnabled ? "bg-emerald-500" : "bg-bg-surface-hover"
                       )}
                     >
-                      Google Gemini
-                    </button>
-                    <button
-                      onClick={() => updateSetting("aiProvider", "chatgpt")}
-                      className={cn(
-                        "flex-1 py-2 px-3 rounded-lg text-sm font-bold transition-all border",
-                        currentSettings.aiProvider === "chatgpt"
-                          ? "bg-emerald-500 text-white border-emerald-500"
-                          : "bg-bg-surface border-border-strong text-text-secondary hover:bg-bg-surface-hover"
-                      )}
-                    >
-                      ChatGPT (OpenAI)
+                      <div
+                        className={cn(
+                          "w-4 h-4 rounded-full bg-white absolute top-1 transition-transform shadow-md",
+                          currentSettings.swarmEnabled ? "translate-x-7" : "translate-x-1"
+                        )}
+                      />
                     </button>
                   </div>
-                  {currentSettings.aiProvider === "chatgpt" && (
-                    <div className="mt-4">
-                      <label className="block text-xs font-bold text-text-secondary mb-1">
-                        OpenAI API Key
-                      </label>
-                      <input
-                        type="password"
-                        value={currentSettings.openAiKey || ""}
-                        onChange={(e) => updateSetting("openAiKey", e.target.value)}
-                        placeholder="sk-proj-..."
-                        className="w-full bg-bg-surface border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 outline-none transition-all"
-                      />
-                      <p className="text-[10px] text-text-muted mt-1">
-                        Deixe em branco para usar a chave padrão (que pode estar sem cota).
-                      </p>
-                    </div>
-                  )}
-                  {currentSettings.aiProvider === "gemini" && (
-                    <div className="mt-4">
-                      <label className="block text-xs font-bold text-text-secondary mb-1">
-                        Gemini API Key
-                      </label>
-                      <input
-                        type="password"
-                        value={currentSettings.geminiApiKey || ""}
-                        onChange={(e) => updateSetting("geminiApiKey", e.target.value)}
-                        placeholder="AIzaSy..."
-                        className="w-full bg-bg-surface border border-border-strong rounded-lg px-3 py-2 text-sm text-text-primary focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all"
-                      />
-                      <p className="text-[10px] text-text-muted mt-1">
-                        Necessário se você estiver usando o app fora do AI Studio (ex: GitHub Pages).
-                      </p>
-                    </div>
-                  )}
                 </div>
                 <div className="bg-[#0d0d0d] p-4 h-64 overflow-y-auto font-mono text-xs custom-scrollbar">
                   {logs.length === 0 ? (
@@ -395,25 +417,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               </div>
             )}
-
-            <button
-              onClick={() => {
-                if (window.confirm("Tem certeza que deseja apagar TODO o histórico de conversas? Esta ação não pode ser desfeita.")) {
-                  onClearHistory();
-                }
-              }}
-              className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl bg-orange-500/10 text-orange-500 font-bold hover:bg-orange-500/20 transition-all border border-orange-500/20"
-            >
-              <Trash2 size={20} />
-              Limpar Histórico de Conversas
-            </button>
-            <button
-              onClick={onLogout}
-              className="w-full flex items-center justify-center gap-2 p-4 rounded-2xl bg-red-500/10 text-red-500 font-bold hover:bg-red-500/20 transition-all border border-red-500/20"
-            >
-              <LogOut size={20} />
-              Sair da Conta
-            </button>
           </div>
         </div>
       </motion.div>

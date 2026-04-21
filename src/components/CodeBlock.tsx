@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import {
   Copy,
   CheckCheck,
@@ -10,12 +10,14 @@ import {
   File,
   ExternalLink,
   ShieldAlert,
+  ArrowDown
 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { FullscreenEditor } from "./FullscreenEditor";
 import { GameModal } from "./GameModal";
 import { copyToClipboard } from "../lib/utils";
+import { toast } from "sonner";
 
 export function CodeBlock({
   language,
@@ -36,6 +38,20 @@ export function CodeBlock({
   const [isExpanded, setIsExpanded] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isConstrained, setIsConstrained] = useState(true);
+
+  const codeContainerRef = useRef<HTMLDivElement>(null);
+
+  const isLongCode = code.split("\n").length > 25; // Define threshould for large code
+
+  const scrollToBottom = () => {
+    if (codeContainerRef.current) {
+      codeContainerRef.current.scrollTo({
+        top: codeContainerRef.current.scrollHeight,
+        behavior: "smooth"
+      });
+    }
+  };
 
   const handleCopy = async () => {
     await copyToClipboard(code);
@@ -46,10 +62,12 @@ export function CodeBlock({
   const handleDownload = async () => {
     try {
       let useFallback = false;
+      const suggestedName = `code_${Date.now()}.${language || "txt"}`;
+      
       if ('showSaveFilePicker' in window) {
         try {
           const handle = await (window as any).showSaveFilePicker({
-            suggestedName: `code_${Date.now()}.${language || "txt"}`,
+            suggestedName,
             types: [
               {
                 description: 'Code file',
@@ -72,13 +90,11 @@ export function CodeBlock({
       }
 
       if (useFallback) {
-        const filename = prompt("Nome do arquivo:", `code_${Date.now()}.${language || "txt"}`);
-        if (!filename) return;
         const blob = new Blob([code], { type: "text/plain" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = filename;
+        a.download = suggestedName;
         a.click();
         URL.revokeObjectURL(url);
       }
@@ -203,23 +219,38 @@ export function CodeBlock({
           </div>
         </div>
         {isExpanded && (
-          <div className="p-4 overflow-x-auto text-[13px] font-mono custom-scrollbar relative">
-            <SyntaxHighlighter
-              language={language}
-              style={vscDarkPlus}
-              customStyle={{ margin: 0, padding: 0, background: "transparent" }}
-              wrapLines={true}
-              showLineNumbers={true}
-              lineNumberStyle={{
-                minWidth: "2.5em",
-                paddingRight: "1em",
-                color: "rgba(255,255,255,0.3)",
-                textAlign: "right",
-                userSelect: "none",
-              }}
+          <div className="relative group">
+            <div 
+              ref={codeContainerRef}
+              className={`p-4 overflow-x-auto text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-96 overflow-y-auto' : ''}`}
             >
-              {code}
-            </SyntaxHighlighter>
+              <SyntaxHighlighter
+                language={language}
+                style={vscDarkPlus}
+                customStyle={{ margin: 0, padding: 0, background: "transparent" }}
+                wrapLines={true}
+                showLineNumbers={true}
+                lineNumberStyle={{
+                  minWidth: "2.5em",
+                  paddingRight: "1em",
+                  color: "rgba(255,255,255,0.3)",
+                  textAlign: "right",
+                  userSelect: "none",
+                }}
+              >
+                {code}
+              </SyntaxHighlighter>
+            </div>
+            
+            {isConstrained && isLongCode && (
+              <button
+                onClick={scrollToBottom}
+                className="absolute bottom-4 right-4 bg-bg-surface border border-border-strong text-text-muted hover:text-primary p-2.5 rounded-xl shadow-xl opacity-20 hover:opacity-100 transition-opacity z-10"
+                title="Rolar para o final do bloco"
+              >
+                <ArrowDown size={18} />
+              </button>
+            )}
           </div>
         )}
       </div>
