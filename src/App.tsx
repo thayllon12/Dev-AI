@@ -152,11 +152,7 @@ declare global {
 }
 
 // AI initialization helper to support custom keys and failover
-const FALLBACK_KEYS = [
-  "AIzaSyCwf4Pt3e0JcygCqKG-YKh5wIPtPIoOd4s",
-  "AIzaSyCSuRMbSIdqLkGpBuq_4cAGRJd_hgur-kM",
-  "AIzaSyC2hL0V80WZRFYZr-GjyZHbkM6IgECyceo"
-];
+const FALLBACK_KEYS: string[] = [];
 
 let globalActiveIndex = 0; // Guardado globalmente para não resetar a cada chamada
 
