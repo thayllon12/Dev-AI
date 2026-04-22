@@ -276,7 +276,17 @@ export const getAI = (customKey?: string): GoogleGenAI => {
     }
   } as unknown as GoogleGenAI;
 };
+import { useClickOutside } from "./hooks/useClickOutside";
+
 const TEXT_MODEL = "gemini-3.1-pro-preview";
+
+const getCleanText = (text: string) => {
+  if (!text) return "";
+  let clean = text.replace(/<think>[\s\S]*?<\/think>/gi, ""); // Remove think tags
+  clean = clean.replace(/```[\s\S]*?```/g, " [Bloco de código omitido na fala] "); // ignore code blocks
+  clean = clean.replace(/[*_~`]/g, ""); // remove simple markdown
+  return clean.trim();
+};
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -356,64 +366,176 @@ export default function App() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  
+  const [isVoiceCommandActive, setIsVoiceCommandActive] = useState(false);
+  const isWakeWordActiveRef = useRef(false);
+  const ignoredResultIndexRef = useRef(0);
+  const shouldSpeakResponseRef = useRef(false);
+  const [isAIRespondingWithVoice, setIsAIRespondingWithVoice] = useState(false);
+  const [voiceSpectrumLevel, setVoiceSpectrumLevel] = useState(0);
 
   useEffect(() => {
+    let audioCtx: AudioContext;
+    let analyser: AnalyserNode;
+    let microphone: MediaStreamAudioSourceNode;
+    let floatArray: Float32Array;
+    let animationId: number;
+    let stream: MediaStream;
+
+    if (isVoiceCommandActive && !isGenerating && !isLoading) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then((s) => {
+        stream = s;
+        audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.smoothingTimeConstant = 0.5;
+        analyser.fftSize = 256;
+        microphone = audioCtx.createMediaStreamSource(stream);
+        microphone.connect(analyser);
+        
+        floatArray = new Float32Array(analyser.frequencyBinCount);
+        
+        const renderFrame = () => {
+          analyser.getFloatFrequencyData(floatArray);
+          let sum = 0;
+          for (let i = 0; i < floatArray.length; i++) {
+             // floatFrequencyData range is roughly -100 to 0
+             let val = floatArray[i] + 100; 
+             if (val < 0) val = 0;
+             sum += val;
+          }
+          const average = sum / floatArray.length;
+          setVoiceSpectrumLevel(average);
+          animationId = requestAnimationFrame(renderFrame);
+        };
+        renderFrame();
+      }).catch(err => {
+         console.warn("Sem acesso ao mic para espectro visual", err);
+      });
+    } else if (isAIRespondingWithVoice) {
+      // Fake spectrum for AI since speechSynthesis doesn't have an AudioNode easily
+      const renderFakeFrame = () => {
+         setVoiceSpectrumLevel(Math.random() * 40 + 20); // random voice pulsing
+         animationId = requestAnimationFrame(renderFakeFrame);
+      }
+      renderFakeFrame();
+    } else {
+      setVoiceSpectrumLevel(0);
+    }
+
+    return () => {
+      if (animationId) cancelAnimationFrame(animationId);
+      if (microphone && analyser) microphone.disconnect(analyser);
+      if (audioCtx) audioCtx.close();
+      if (stream) stream.getTracks().forEach(t => t.stop());
+    }
+  }, [isVoiceCommandActive, isAIRespondingWithVoice, isGenerating, isLoading]);
+
+  useEffect(() => {
+    let keepAliveInterval: any;
+    let sendTimeout: any = null;
+    
     if (userSettings.wakeWordEnabled) {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       if (SpeechRecognition) {
-        const recognition = new SpeechRecognition();
-        recognition.continuous = true;
-        recognition.interimResults = true;
-        recognition.lang = 'pt-BR';
+        let recognition = wakeWordRecognitionRef.current;
+        if (!recognition) {
+           recognition = new SpeechRecognition();
+           recognition.continuous = true;
+           recognition.interimResults = true;
+           recognition.lang = 'pt-BR';
+           wakeWordRecognitionRef.current = recognition;
+        }
         
+        let lastResultTime = Date.now();
+
         recognition.onresult = (event: any) => {
+          lastResultTime = Date.now();
           const results = event.results;
-          for (let i = event.resultIndex; i < results.length; ++i) {
-            const transcript = results[i][0].transcript.toLowerCase();
-            if (transcript.includes('eae dev') || transcript.includes('e aí dev') || transcript.includes('ia dev')) {
-              if (!isGenerating && !isLoading) {
-                // Remove the wake word from transcript and put it in input if there's more text
-                let cleanTranscript = transcript.replace(/eae dev ai|e aí dev ai|ia dev ai/g, '').trim();
-                const actualText = cleanTranscript || "Eae Dev AI";
-                setInput(actualText);
-                
-                // If it's a final result and not just interim
-                if (results[i].isFinal) {
-                  // Simulate hitting enter slightly after
-                  setTimeout(() => {
-                    const sendBtn = document.getElementById("send-button");
-                    if (sendBtn) sendBtn.click();
-                  }, 500);
-                }
-              }
-            }
+          
+          if (!isWakeWordActiveRef.current) {
+             let fullTranscript = "";
+             for (let i = 0; i < results.length; ++i) {
+                fullTranscript += results[i][0].transcript.toLowerCase() + " ";
+             }
+             
+             const wakeWordRegex = /(eae|e a[íi]|ia|ok|hey|ol[áa])\s*(dev|deve|deu)\s*(ai|aí|a)?/i;
+             const match = fullTranscript.match(wakeWordRegex);
+             
+             if (match && !isGenerating && !isLoading) {
+                 isWakeWordActiveRef.current = true;
+                 setIsVoiceCommandActive(true);
+                 ignoredResultIndexRef.current = results.length;
+                 
+                 const idx = match.index! + match[0].length;
+                 const textAfter = fullTranscript.substring(idx).trim();
+                 if (textAfter) {
+                    setInput(textAfter);
+                 } else {
+                    setInput("");
+                 }
+                 
+                 if (sendTimeout) clearTimeout(sendTimeout);
+                 sendTimeout = setTimeout(() => {
+                    isWakeWordActiveRef.current = false;
+                    setIsVoiceCommandActive(false);
+                 }, 15000);
+             }
+          } else {
+             let activeTranscript = "";
+             for (let i = ignoredResultIndexRef.current; i < results.length; ++i) {
+                 if (results[i]) {
+                     activeTranscript += results[i][0].transcript + " ";
+                 }
+             }
+             
+             if (activeTranscript.trim()) {
+                 setInput(activeTranscript.trim());
+             }
+             
+             if (sendTimeout) clearTimeout(sendTimeout);
+             sendTimeout = setTimeout(() => {
+                 isWakeWordActiveRef.current = false;
+                 setIsVoiceCommandActive(false);
+             }, 15000);
           }
         };
 
         recognition.onend = () => {
           // Restart to keep listening
-          if (userSettings.wakeWordEnabled) {
+          if (userSettings.wakeWordEnabled && wakeWordRecognitionRef.current) {
             try {
-              recognition.start();
+              wakeWordRecognitionRef.current.start();
             } catch (e) {}
           }
         };
 
         try {
           recognition.start();
-          wakeWordRecognitionRef.current = recognition;
         } catch (e) {}
+
+        // Prevent Zombie State in Chrome
+        keepAliveInterval = setInterval(() => {
+           if (Date.now() - lastResultTime > 15000) {
+             if (wakeWordRecognitionRef.current) {
+                try {
+                  wakeWordRecognitionRef.current.stop(); // will trigger onend -> start
+                } catch(e) {}
+             }
+           }
+        }, 15000);
       }
     } else {
       if (wakeWordRecognitionRef.current) {
-        wakeWordRecognitionRef.current.stop();
+        try { wakeWordRecognitionRef.current.stop(); } catch(e){}
         wakeWordRecognitionRef.current = null;
       }
     }
     
     return () => {
+      clearInterval(keepAliveInterval);
+      if (sendTimeout) clearTimeout(sendTimeout);
       if (wakeWordRecognitionRef.current) {
-        wakeWordRecognitionRef.current.stop();
+        try { wakeWordRecognitionRef.current.stop(); } catch(e){}
         wakeWordRecognitionRef.current = null;
       }
     };
@@ -425,6 +547,11 @@ export default function App() {
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
+  const attachmentMenuRef = useRef<HTMLDivElement>(null);
+
+  useClickOutside(attachmentMenuRef, () => {
+    if (isAttachmentMenuOpen) setIsAttachmentMenuOpen(false);
+  });
 
   useEffect(() => {
     if (screenVideoRef.current && screenStream) {
@@ -1075,6 +1202,9 @@ NUNCA junte códigos de arquivos diferentes no mesmo bloco. Sempre separe-os cla
 Seus tokens de saída são virtualmente INFINITOS. NUNCA resuma, abrevie ou omita partes do código por causa do tamanho. Envie código 100% completo, mesmo com 50.000+ linhas.
 Se e SOMENTE se solicitado, mostre seu código de raciocínio.
 
+DIRETIVA DE GERAÇÃO DE IMAGENS E MÍDIA:
+Sempre que o usuário pedir para gerar, desenhar ou criar uma imagem, você DEVE OBRIGATORIAMENTE usar sua ferramenta (function call) 'generateImage'. NUNCA escreva URLs de imagens diretamente no seu texto. Somente a ferramenta é capaz de injetá-las com sucesso. Use a ferramenta!
+
 PROCESSAMENTO DE ARQUIVOS DE GRANDE ESCALA (10.000+ LINHAS):
 Você é uma IA extremamente avançada especializada em analisar e reescrever arquivos de grande escala.
 Instruções:
@@ -1368,6 +1498,12 @@ ${artifactsInstruction}`;
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isLoading || isGenerating || !user)
       return;
+
+    if (isVoiceCommandActive) {
+      shouldSpeakResponseRef.current = true;
+      setIsVoiceCommandActive(false);
+      isWakeWordActiveRef.current = false;
+    }
 
     if (input.trim() === "Dev AI🍷") {
       setInput("");
@@ -1896,9 +2032,15 @@ ${artifactsInstruction}`;
       if (userSettings.mode === "Nano Banana") {
         setStatusMessage("Gerando imagem...");
         try {
-          await new Promise(r => setTimeout(r, 2000)); // Simulando tempo de inferência
-          const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(input)}?nologo=true&seed=${Math.floor(Math.random() * 999999)}&width=1024&height=1024`;
-          aiResponseText = `![Imagem Gerada](${imageUrl})\n\n*Imagem gerada via motor gráfico hiper-realista.*`;
+          const safePrompt = input.replace(/["']/g, "");
+          const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?nologo=true&seed=${Math.floor(Math.random() * 999999)}&width=1024&height=1024`;
+          
+          const prefetchImage = new window.Image();
+          prefetchImage.src = imageUrl;
+
+          await new Promise(r => setTimeout(r, 3000)); // Simulando tempo para a pre-load iniciar
+          
+          aiResponseText = `![${safePrompt}](${imageUrl})\n\n*Imagem gerada via motor gráfico hiper-realista.*`;
         } catch (imgErr: any) {
           console.error("Image Generation Error:", imgErr);
           let errorString = "";
@@ -1977,12 +2119,16 @@ ${artifactsInstruction}`;
         if (call.name === "generateImage") {
           const imagePrompt = call.args.prompt as string;
           setStatusMessage(`Gerando imagem para: "${imagePrompt}"...`);
-          aiResponseText = ""; // Reset since we are doing a tool call
 
           try {
-            await new Promise(r => setTimeout(r, 2000)); // Simula delay do processamento
-            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(imagePrompt)}?nologo=true&seed=${Math.floor(Math.random() * 999999)}&width=1024&height=1024`;
-            aiResponseText = `![Imagem Gerada](${imageUrl})\n\n*Imagem carregada via motor gráfico hiper-realista.*`;
+            const safePrompt = imagePrompt.replace(/["']/g, "");
+            const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(safePrompt)}?nologo=true&seed=${Math.floor(Math.random() * 999999)}&width=1024&height=1024`;
+            
+            const prefetchImage = new window.Image();
+            prefetchImage.src = imageUrl;
+
+            await new Promise(r => setTimeout(r, 3000)); // Simula delay do processamento
+            aiResponseText += `\n\n![${safePrompt}](${imageUrl})\n\n*Imagem carregada via motor gráfico hiper-realista.*`;
           } catch (imgErr: any) {
             console.error("Image Generation Error:", imgErr);
             let errorString = "";
@@ -2275,6 +2421,23 @@ ${artifactsInstruction}`;
 
       if (userSettings.notificationsEnabled && document.hidden) {
         showNotification("Dev AI", aiResponseText.substring(0, 100) + "...");
+      }
+
+      if (aiResponseText && !signal.aborted) {
+        if (shouldSpeakResponseRef.current || userSettings.realVoiceEnabled) {
+          if ('speechSynthesis' in window) {
+             setIsAIRespondingWithVoice(true);
+             const cleanMessage = getCleanText(aiResponseText);
+             const utterance = new SpeechSynthesisUtterance(cleanMessage);
+             utterance.lang = "pt-BR";
+             utterance.rate = 1.1;
+             utterance.onend = () => {
+               setIsAIRespondingWithVoice(false);
+               shouldSpeakResponseRef.current = false;
+             };
+             window.speechSynthesis.speak(utterance);
+          }
+        }
       }
     } catch (err: any) {
       if (err.message === "AbortError" || err.name === "AbortError") {
@@ -2904,6 +3067,35 @@ ${artifactsInstruction}`;
         {/* Input Footer */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#212121] via-[#212121] to-transparent pt-10 pb-6 w-full">
           <div className="max-w-5xl mx-auto px-4 md:px-8 relative w-full">
+            <AnimatePresence>
+              {(isVoiceCommandActive || isAIRespondingWithVoice) && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 50, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 50, scale: 0.95 }}
+                  className="mb-6 p-6 bg-bg-surface border border-red-500/30 rounded-3xl shadow-[0_0_40px_rgba(239,68,68,0.2)] flex flex-col items-center justify-center gap-4 relative overflow-hidden"
+                >
+                  <div className="absolute inset-0 bg-red-500/5 animate-pulse" />
+                  
+                  <div className="flex gap-2 h-16 items-center justify-center mb-2 z-10 w-full overflow-hidden">
+                    {[...Array(24)].map((_, i) => (
+                       <motion.div
+                         key={i}
+                         className="w-1.5 bg-red-500 rounded-full"
+                         animate={{ height: Math.max(8, isVoiceCommandActive ? voiceSpectrumLevel * (Math.random() * 2) : voiceSpectrumLevel * (Math.random() * 1.5)) + "px" }}
+                         transition={{ type: "spring", bounce: 0, duration: 0.1 }}
+                         style={{ opacity: 0.8 }}
+                       />
+                    ))}
+                  </div>
+                  
+                  <p className="text-xl font-medium text-white z-10 text-center max-w-2xl">
+                     {isAIRespondingWithVoice ? "Dev AI respondendo..." : (input || "Ouvindo...")}
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             {errorMessage && (
               <div key="error-message-banner" className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded-lg flex items-start gap-3 text-red-400">
                 <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
@@ -3042,7 +3234,7 @@ ${artifactsInstruction}`;
                   "relative bg-[#212121] border border-[#3f3f46] rounded-[26px] flex items-end min-h-[52px] px-1 py-1 shadow-sm transition-all duration-300 w-full"
                 )}>
                   {/* Left: Plus Button */}
-                  <div className="relative shrink-0 mb-0.5 ml-1">
+                  <div className="relative shrink-0 mb-0.5 ml-1" ref={attachmentMenuRef}>
                     <button
                       onClick={() => setIsAttachmentMenuOpen(!isAttachmentMenuOpen)}
                       disabled={currentUserRole === "view"}

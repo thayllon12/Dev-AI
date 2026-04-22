@@ -324,27 +324,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </p>
           </div>
 
-          {!currentSettings.isDevUnlocked && (
-            <div className="pt-4 border-t border-border-strong">
-              <button
-                onClick={() => {
-                  const btn = document.getElementById("faceid-btn");
-                  if (btn) btn.innerHTML = "Escaneando Biometria...";
-                  setTimeout(() => {
-                    updateSetting("isDevUnlocked", true);
-                    if (btn) btn.innerHTML = "Biometria Mestre Reconhecida! Acesso Concedido.";
-                    btn?.classList.replace("text-blue-500", "text-emerald-500");
-                  }, 2500);
-                }}
-                id="faceid-btn"
-                className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-blue-500/10 text-blue-500 font-bold hover:bg-blue-500/20 transition-all border border-blue-500/20 shadow-sm"
-              >
-                <Monitor size={24} />
-                FaceID / Biometria da Câmera (Kernel Dev)
-              </button>
-            </div>
-          )}
-
           {/* Data Management Section */}
           <div className="pt-8 space-y-4">
             {currentSettings.isDevUnlocked && (

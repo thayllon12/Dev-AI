@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
-import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp, Archive } from "lucide-react";
+import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp, Archive, Maximize2, Image as ImageIcon } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
+import { useClickOutside } from "../hooks/useClickOutside";
 import { FilePreviewModal } from "./FilePreviewModal";
 import { AILogo } from "./AILogo";
 import { copyToClipboard, guessLanguage } from "../lib/utils";
@@ -44,6 +45,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   const [isThinkExpanded, setIsThinkExpanded] = useState(false);
   const [isThinkVisible, setIsThinkVisible] = useState(true);
 
+  const actionsMenuRef = React.useRef<HTMLDivElement>(null);
+
+  useClickOutside(actionsMenuRef, () => {
+    if (showActions) setShowActions(false);
+  });
+
   useEffect(() => {
     return () => {
       if (isPlaying) {
@@ -68,13 +75,41 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownloadImage = (url: string) => {
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `generated-image-${Date.now()}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleDownloadImage = async (url: string, filename: string = 'image') => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${filename.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(objectUrl);
+    } catch (e) {
+       // fallback
+       const link = document.createElement("a");
+       link.href = url;
+       link.download = `${filename.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.png`;
+       link.click();
+    }
+  };
+
+  const handleCopyImage = async (url: string) => {
+    try {
+      const response = await fetch(url);
+      const blob = await response.blob();
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          [blob.type]: blob
+        })
+      ]);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Falha ao copiar imagem. Certifique-se que o navegador suporta isso.", err);
+    }
   };
 
   const handleDownloadText = () => {
@@ -288,7 +323,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                         </code>
                       );
                     },
-                    p: ({ children }) => <p className="mb-4 last:mb-0 leading-relaxed">{children}</p>,
+                    p: ({ children }) => <div className="mb-4 last:mb-0 leading-relaxed">{children}</div>,
                     ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
                     ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
                     h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
@@ -310,31 +345,59 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     },
                     img: ({ src, alt }) => {
                       if (!src) return null;
-                      const isGeneratedImage = src.startsWith("data:image");
+                      const isGeneratedImage = src.startsWith("data:image") || src.startsWith("https://image.pollinations.ai");
                       return (
-                        <span className="relative group my-4 rounded-xl overflow-hidden shadow-2xl border border-border-strong block w-fit">
-                          <img src={src} alt={alt || "Imagem"} className="max-w-full h-auto" referrerPolicy="no-referrer" />
-                          {isGeneratedImage && (
-                            <span className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-4">
+                        <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong w-fit max-w-full">
+                          <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans border-b border-border-strong">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon size={14} className="text-primary" />
+                              <span className="uppercase font-semibold text-text-primary">IMAGEM</span>
+                            </div>
+                            <div className="flex items-center gap-3">
                               <button
-                                onClick={() => handleDownloadImage(src)}
-                                className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
-                                title="Baixar Imagem"
-                                aria-label="Baixar Imagem"
+                                onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })}
+                                className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                                title="Expandir Imagem"
                               >
-                                <Download size={24} />
+                                <Maximize2 size={14} /> Tela Cheia
                               </button>
-                              <button
-                                onClick={() => window.open(src, "_blank")}
-                                className="p-3 bg-white text-black rounded-full hover:scale-110 transition-transform shadow-xl"
-                                title="Ver em Tela Cheia"
-                                aria-label="Ver em Tela Cheia"
-                              >
-                                <ExternalLink size={24} />
-                              </button>
-                            </span>
-                          )}
-                        </span>
+                              {isGeneratedImage && (
+                                <>
+                                  <button
+                                    onClick={() => handleDownloadImage(src, alt || "imagem")}
+                                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                                    title="Baixar Imagem"
+                                  >
+                                    <Download size={14} /> Download
+                                  </button>
+                                  <button
+                                    onClick={() => handleCopyImage(src)}
+                                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+                                    title="Copiar Imagem"
+                                  >
+                                    {copied ? <CheckCheck size={14} className="text-emerald-500" /> : <Copy size={14} />} Copiar
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+                          
+                          <div className="relative bg-black/20 flex flex-col items-center justify-center p-2 sm:p-4">
+                            <img 
+                              src={src} 
+                              alt={alt || "Imagem"} 
+                              className="max-w-full h-auto cursor-pointer rounded-lg shadow-xl" 
+                              referrerPolicy="no-referrer" 
+                              onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
+                              title="Clique para expandir" 
+                            />
+                            {isGeneratedImage && (
+                               <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 w-8 h-8 opacity-50 hover:opacity-100 transition-opacity select-none drop-shadow-md flex items-center justify-center p-1.5 rounded-full bg-black/40 backdrop-blur-md pointer-events-none">
+                                <AILogo mode={userSettings?.mode} className="w-full h-full" />
+                              </div>
+                            )}
+                          </div>
+                        </div>
                       );
                     },
                   }}
@@ -396,7 +459,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 {isPlaying ? <VolumeX size={18} /> : <Volume2 size={18} />}
               </button>
             )}
-            <div className="relative">
+            <div className="relative" ref={actionsMenuRef}>
               <button
                 onClick={() => setShowActions(!showActions)}
                 className={`p-1.5 rounded-lg transition-all ${
@@ -508,14 +571,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         </div>
       </motion.div>
 
-      {previewFile && (
-        <FilePreviewModal
-          isOpen={!!previewFile}
-          onClose={() => setPreviewFile(null)}
-          dataUrl={previewFile.dataUrl}
-          mimeType={previewFile.mimeType}
-        />
-      )}
+      <FilePreviewModal
+        isOpen={!!previewFile}
+        onClose={() => setPreviewFile(null)}
+        dataUrl={previewFile?.dataUrl || ""}
+        mimeType={previewFile?.mimeType || "image/png"}
+      />
     </>
   );
 }, (prevProps, nextProps) => {

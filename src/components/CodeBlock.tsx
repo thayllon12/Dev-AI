@@ -39,6 +39,7 @@ export function CodeBlock({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isConstrained, setIsConstrained] = useState(true);
+  const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "success">("idle");
 
   const codeContainerRef = useRef<HTMLDivElement>(null);
 
@@ -60,6 +61,7 @@ export function CodeBlock({
   };
 
   const handleDownload = async () => {
+    setDownloadState("downloading");
     try {
       let useFallback = false;
       const suggestedName = `code_${Date.now()}.${language || "txt"}`;
@@ -80,6 +82,7 @@ export function CodeBlock({
           await writable.close();
         } catch (err: any) {
           if (err.name === 'AbortError') {
+            setDownloadState("idle");
             return; // User cancelled
           }
           console.warn("showSaveFilePicker failed, using fallback:", err);
@@ -95,11 +98,19 @@ export function CodeBlock({
         const a = document.createElement("a");
         a.href = url;
         a.download = suggestedName;
+        // Important: Needs to be in DOM for some iframe config downloads to work
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
       }
+      
+      setDownloadState("success");
+      setTimeout(() => setDownloadState("idle"), 1500);
+
     } catch (err) {
       console.error("Failed to save file", err);
+      setDownloadState("idle");
     }
   };
 
@@ -200,10 +211,15 @@ export function CodeBlock({
             )}
             <button
               onClick={handleDownload}
-              className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
+              className={`flex items-center gap-1.5 transition-colors ${
+                downloadState === 'success' ? 'text-green-500 font-bold' : 
+                downloadState === 'downloading' ? 'text-yellow-500 font-bold' : 
+                'hover:text-text-primary text-text-muted'
+              }`}
             >
-              <Download size={14} />
-              Download
+              {downloadState === 'success' ? <CheckCheck size={14} /> : <Download size={14} />}
+              {downloadState === 'success' ? 'Baixando...' : 
+               downloadState === 'downloading' ? 'Baixando...' : 'Download'}
             </button>
             <button
               onClick={handleCopy}
