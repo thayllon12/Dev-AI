@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2, Volume2 } from "lucide-react";
-import { cn } from "../lib/utils";
+import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2, Volume2, Search, Copy, CheckCheck, MessageSquare } from "lucide-react";
+import { cn, copyToClipboard } from "../lib/utils";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -28,6 +28,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 }) => {
   const [height, setHeight] = useState(window.innerHeight * 0.8);
   const [isResizing, setIsResizing] = useState(false);
+  const [logFilter, setLogFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
+  const [copiedLogs, setCopiedLogs] = useState(false);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     setIsResizing(true);
@@ -200,10 +202,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 icon: <Monitor size={18} />,
               },
               {
+                id: "typingEffect",
+                label: "Efeito de Digitação",
+                desc: "Respostas animadas estilo chat natural",
+                icon: <MessageSquare size={18} />,
+              },
+              {
+                id: "typingSound",
+                label: "Som de Digitação",
+                desc: "Efeito sonoro durante a digitação",
+                icon: <Volume2 size={18} />,
+              },
+              {
                 id: "vibration",
-                label: "Vibração",
-                desc: "Feedback tátil ao receber mensagens.",
+                label: "Vibração Haptic",
+                desc: "Feedback tátil junto com digitação",
                 icon: <Monitor size={18} />,
+              },
+              {
+                id: "googleSearchEnabled",
+                label: "Pesquisa Web (Google)",
+                desc: "Permitir buscas em tempo real na internet",
+                icon: <Search size={18} />,
+              },
+              {
+                id: "realVoiceEnabled",
+                label: "Voz Real da IA (Gemini)",
+                desc: "Usa modelo avançado de áudio da IA",
+                icon: <Volume2 size={18} />,
               },
               {
                 id: "wakeWordEnabled",
@@ -379,17 +405,62 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </button>
                   </div>
                 </div>
-                <div className="bg-[#0d0d0d] p-4 h-64 overflow-y-auto font-mono text-xs custom-scrollbar">
-                  {logs.length === 0 ? (
-                    <div className="text-text-muted/50 italic text-center mt-20">Nenhum log registrado.</div>
+                {/* System Logs */}
+                <div className="flex items-center justify-between mt-6 mb-2">
+                  <div className="text-sm font-semibold text-text-primary capitalize flex gap-2">
+                    <button 
+                      onClick={() => setLogFilter('all')} 
+                      className={cn("px-2 py-0.5 rounded text-xs transition-colors", logFilter === 'all' ? "bg-white/10 text-white" : "text-text-muted hover:text-white")}
+                    >
+                      Todos
+                    </button>
+                    <button 
+                      onClick={() => setLogFilter('error')} 
+                      className={cn("px-2 py-0.5 rounded text-xs transition-colors", logFilter === 'error' ? "bg-red-500/20 text-red-400" : "text-text-muted hover:text-red-400")}
+                    >
+                      Erros
+                    </button>
+                    <button 
+                      onClick={() => setLogFilter('warn')} 
+                      className={cn("px-2 py-0.5 rounded text-xs transition-colors", logFilter === 'warn' ? "bg-yellow-500/20 text-yellow-400" : "text-text-muted hover:text-yellow-400")}
+                    >
+                      Avisos
+                    </button>
+                    <button 
+                      onClick={() => setLogFilter('info')} 
+                      className={cn("px-2 py-0.5 rounded text-xs transition-colors", logFilter === 'info' ? "bg-green-500/20 text-green-400" : "text-text-muted hover:text-green-400")}
+                    >
+                      Info
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <button 
+                      className="px-3 py-1 flex items-center gap-1 text-xs bg-bg-surface-hover hover:bg-white/10 text-text-primary rounded-md transition-colors"
+                      onClick={async () => {
+                        const logsToCopy = logs
+                          .filter(log => logFilter === 'all' || log.type === logFilter)
+                          .map(log => `[${log.time.toLocaleTimeString()}] [${log.type.toUpperCase()}] ${log.msg}`)
+                          .join('\n');
+                        await copyToClipboard(logsToCopy);
+                        setCopiedLogs(true);
+                        setTimeout(() => setCopiedLogs(false), 2000);
+                      }}
+                    >
+                      {copiedLogs ? <CheckCheck size={14} className="text-emerald-500" /> : <Copy size={14} />} Copiar Logs
+                    </button>
+                  </div>
+                </div>
+                <div className="bg-[#0d0d0d] p-4 h-64 overflow-y-auto font-mono text-xs custom-scrollbar border border-border-subtle rounded-lg">
+                  {logs.filter(log => logFilter === 'all' || log.type === logFilter).length === 0 ? (
+                    <div className="text-text-muted/50 italic text-center mt-20">Nenhum log para exibir.</div>
                   ) : (
-                    logs.map((log, i) => (
+                    logs.filter(log => logFilter === 'all' || log.type === logFilter).map((log, i) => (
                       <div key={i} className={cn(
                         "mb-1 pb-1 border-b border-white/5",
                         log.type === 'error' ? "text-red-400" : log.type === 'warn' ? "text-yellow-400" : "text-green-400"
                       )}>
                         <span className="text-white/30 mr-2">[{log.time.toLocaleTimeString()}]</span>
-                        <span className="break-all">{log.msg}</span>
+                        <span className="break-all select-text">{log.msg}</span>
                       </div>
                     ))
                   )}

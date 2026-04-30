@@ -212,7 +212,7 @@ service cloud.firestore {
           allow read: if isOwner(userId) || isCollaborator(userId, chatId) || isPublicChat(userId, chatId);
           allow create: if hasChatWriteAccess(userId, chatId) && uidUnchanged();
           allow update: if hasChatWriteAccess(userId, chatId) && uidNotModified();
-          allow delete: if hasChatAdminAccess(userId, chatId) || (hasChatWriteAccess(userId, chatId) && resource.data.uid == request.auth.uid);
+          allow delete: if hasChatWriteAccess(userId, chatId);
         }
       }
     }

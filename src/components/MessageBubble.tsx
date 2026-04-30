@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { motion } from "motion/react";
-import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp, Archive, Maximize2, Image as ImageIcon } from "lucide-react";
+import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, MoreVertical, Volume2, VolumeX, X, SplitSquareHorizontal, Brain, ChevronDown, ChevronUp, Archive, Maximize2, Image as ImageIcon, Play } from "lucide-react";
 import { CodeBlock } from "./CodeBlock";
 import { useClickOutside } from "../hooks/useClickOutside";
 import { FilePreviewModal } from "./FilePreviewModal";
@@ -17,6 +17,8 @@ interface MessageBubbleProps {
   themeColor: string;
   userPhoto?: string | null;
   onRegenerate?: (msg: any) => void;
+  onContinue?: (msg: any) => void;
+  isLastMessage?: boolean;
   onEdit?: (msg: any) => void;
   onBranch?: (msg: any) => void;
   userSettings: any;
@@ -30,6 +32,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   themeColor,
   userPhoto,
   onRegenerate,
+  onContinue,
+  isLastMessage,
   onEdit,
   onBranch,
   userSettings,
@@ -126,9 +130,18 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
       window.speechSynthesis.cancel();
       setIsPlaying(false);
     } else {
-      const utterance = new SpeechSynthesisUtterance(getCleanText(msg.content));
+      window.speechSynthesis.cancel(); // Clear any stuck speech
+      const text = getCleanText(msg.content) || "Sem conteúdo para ler.";
+      const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = 'pt-BR';
       utterance.onend = () => setIsPlaying(false);
+      utterance.onerror = (e) => {
+        console.error("Speech synthesis error", e);
+        setIsPlaying(false);
+      };
+      
+      // Browsers block TTS if it is not a direct result of user interaction
+      // which is broken by setTimeout.
       window.speechSynthesis.speak(utterance);
       setIsPlaying(true);
     }
@@ -187,7 +200,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     }
   }
 
-  const hasCodeBlocks = /```(\w+)?\n([\s\S]*?)```/g.test(msg.content);
+  const hasCodeBlocks = msg.content && typeof msg.content === 'string' && msg.content.includes("```");
 
   return (
     <>
@@ -274,7 +287,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     </button>
                   </div>
                   {isThinkExpanded && (
-                    <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary italic whitespace-pre-wrap font-mono leading-relaxed">
+                    <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary italic whitespace-pre-wrap font-mono leading-relaxed select-text">
                       {thinkContent}
                     </div>
                   )}
@@ -282,13 +295,47 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               )}
               
               {isUser ? (
-                <div className="bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left">
+                <div className="bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left select-text">
                   <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
                     {msg.content}
                   </div>
                 </div>
               ) : (
-                <div className="markdown-body">
+                <div className="markdown-body select-text w-full max-w-full overflow-hidden">
+                  {(mainContent.length > 50000 && !mainContent.includes('blob:')) ? (
+                      (() => {
+                        const parts = mainContent.split('```');
+                        return parts.map((part, index) => {
+                          if (index % 2 === 1) { // It's a code block
+                            const firstNewline = part.indexOf('\n');
+                            let language = "";
+                            let code = part;
+                            if (firstNewline !== -1) {
+                              language = part.substring(0, firstNewline).trim();
+                              code = part.substring(firstNewline + 1);
+                            }
+                            return (
+                              <CodeBlock 
+                                key={index}
+                                language={language || guessLanguage(code.substring(0, 500))}
+                                code={code}
+                                userSettings={userSettings}
+                                fullMessageContent={msg.content}
+                                onAnalyzeSecurity={onAnalyzeSecurity}
+                                onAskAI={onAskAI}
+                                isGenerating={msg.isGenerating}
+                              />
+                            );
+                          } else {
+                            return (
+                              <div key={index} className="whitespace-pre-wrap font-sans text-[15px] leading-relaxed my-2">
+                                {part}
+                              </div>
+                            );
+                          }
+                        });
+                      })()
+                  ) : (
                   <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
                   components={{
@@ -306,6 +353,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                             fullMessageContent={msg.content}
                             onAnalyzeSecurity={onAnalyzeSecurity}
                             onAskAI={onAskAI}
+                            isGenerating={msg.isGenerating}
                           />
                         );
                       }
@@ -404,7 +452,34 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 >
                   {mainContent}
                 </ReactMarkdown>
+                )}
               </div>
+              )}
+              
+              {isLastMessage && !isUser && onContinue && msg.content && msg.content.length > 200 && (
+                (() => {
+                  const isCodeBlockOpen = (msg.content.match(/```/g) || []).length % 2 !== 0;
+                  const endsAbruptly = msg.content.length > 2000 && !msg.content.trim().match(/(\.|!|\?|```|>|}|\])$/);
+                  const isCutOff = isCodeBlockOpen || endsAbruptly;
+                  
+                  if (!isCutOff) return null;
+
+                  return (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mt-4 flex justify-start"
+                    >
+                      <button
+                        onClick={() => onContinue(msg)}
+                        className="flex items-center gap-2 px-4 py-2 text-xs font-medium text-text-primary bg-bg-surface border border-border-strong hover:bg-bg-surface-hover hover:border-text-secondary rounded-full shadow-sm transition-all group"
+                      >
+                        <Play size={14} className="fill-current opacity-70 group-hover:opacity-100" />
+                        <span>Continuar de onde parou</span>
+                      </button>
+                    </motion.div>
+                  );
+                })()
               )}
             </div>
           </div>
@@ -502,6 +577,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     <span>Selecionar texto</span>
                   </button>
 
+                  {!isUser && onContinue && (
+                    <button
+                      onClick={() => {
+                        onContinue(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <Play size={16} />
+                      <span>Continuar Geração</span>
+                    </button>
+                  )}
+
                   {isUser && onEdit && (
                     <button
                       onClick={() => {
@@ -580,15 +668,27 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     </>
   );
 }, (prevProps, nextProps) => {
+  const attachmentsEqual = (a1: any[], a2: any[]) => {
+    if (!a1 && !a2) return true;
+    if (!a1 || !a2) return false;
+    if (a1.length !== a2.length) return false;
+    for (let i = 0; i < a1.length; i++) {
+      if (a1[i].mimeType !== a2[i].mimeType || a1[i].dataUrl?.length !== a2[i].dataUrl?.length) {
+         return false;
+      }
+    }
+    return true;
+  };
+
   return (
     prevProps.msg.id === nextProps.msg.id &&
     prevProps.msg.content === nextProps.msg.content &&
     prevProps.msg.role === nextProps.msg.role &&
-    JSON.stringify(prevProps.msg.attachments) === JSON.stringify(nextProps.msg.attachments) &&
+    prevProps.msg.isGenerating === nextProps.msg.isGenerating &&
+    prevProps.msg.streamingThinkContent === nextProps.msg.streamingThinkContent &&
+    attachmentsEqual(prevProps.msg.attachments, nextProps.msg.attachments) &&
     prevProps.isCodeMode === nextProps.isCodeMode &&
     prevProps.themeColor === nextProps.themeColor &&
-    prevProps.userPhoto === nextProps.userPhoto &&
-    prevProps.userSettings?.mode === nextProps.userSettings?.mode &&
-    prevProps.userSettings?.theme === nextProps.userSettings?.theme
+    prevProps.isLastMessage === nextProps.isLastMessage
   );
 });

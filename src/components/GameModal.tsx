@@ -43,7 +43,7 @@ export function GameModal({
           srcDoc={code}
           className="w-full h-full border-none"
           title="Game Preview"
-          sandbox="allow-scripts allow-modals allow-popups"
+          sandbox="allow-scripts allow-modals allow-popups allow-same-origin allow-pointer-lock"
         />
       </div>
     </div>

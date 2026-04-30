@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect, lazy, Suspense } from "react";
 import {
   Copy,
   CheckCheck,
@@ -14,10 +14,29 @@ import {
 } from "lucide-react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
-import { FullscreenEditor } from "./FullscreenEditor";
-import { GameModal } from "./GameModal";
 import { copyToClipboard } from "../lib/utils";
 import { toast } from "sonner";
+
+const lazyWithRetry = (componentImport: () => Promise<any>) => 
+  lazy(async () => {
+    const pageHasAlreadyBeenForceRefreshed = JSON.parse(
+      window.sessionStorage.getItem('page-has-been-force-refreshed') || 'false'
+    );
+    try {
+      const component = await componentImport();
+      window.sessionStorage.setItem('page-has-been-force-refreshed', 'false');
+      return component;
+    } catch (error) {
+      if (!pageHasAlreadyBeenForceRefreshed) {
+        window.sessionStorage.setItem('page-has-been-force-refreshed', 'true');
+        window.location.reload();
+      }
+      throw error;
+    }
+  });
+
+const FullscreenEditor = lazyWithRetry(() => import("./FullscreenEditor").then(m => ({ default: m.FullscreenEditor })));
+const GameModal = lazyWithRetry(() => import("./GameModal").then(m => ({ default: m.GameModal })));
 
 export function CodeBlock({
   language,
@@ -26,6 +45,7 @@ export function CodeBlock({
   fullMessageContent,
   onAnalyzeSecurity,
   onAskAI,
+  isGenerating,
 }: {
   language: string;
   code: string;
@@ -33,6 +53,7 @@ export function CodeBlock({
   fullMessageContent?: string;
   onAnalyzeSecurity?: (code: string) => void;
   onAskAI?: (code: string) => void;
+  isGenerating?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(true);
@@ -42,8 +63,9 @@ export function CodeBlock({
   const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "success">("idle");
 
   const codeContainerRef = useRef<HTMLDivElement>(null);
+  const isScrolledToBottomRef = useRef(true);
 
-  const isLongCode = code.split("\n").length > 25; // Define threshould for large code
+  const isLongCode = code.split("\n").length > 15; // Define threshould for large code
 
   const scrollToBottom = () => {
     if (codeContainerRef.current) {
@@ -51,8 +73,38 @@ export function CodeBlock({
         top: codeContainerRef.current.scrollHeight,
         behavior: "smooth"
       });
+      isScrolledToBottomRef.current = true;
     }
   };
+
+  useEffect(() => {
+    const handleScroll = () => {
+      if (codeContainerRef.current) {
+        const { scrollTop, scrollHeight, clientHeight } = codeContainerRef.current;
+        isScrolledToBottomRef.current = scrollHeight - scrollTop - clientHeight <= 40;
+      }
+    };
+    const node = codeContainerRef.current;
+    if (node) node.addEventListener("scroll", handleScroll);
+    return () => { if (node) node.removeEventListener("scroll", handleScroll); };
+  }, [isExpanded]);
+
+  useEffect(() => {
+    const node = codeContainerRef.current;
+    if (!node) return;
+    
+    // Using ResizeObserver to enforce stick-to-bottom
+    const observer = new ResizeObserver(() => {
+      if (isScrolledToBottomRef.current) {
+        node.scrollTop = node.scrollHeight;
+      }
+    });
+    
+    observer.observe(node);
+    if (node.firstElementChild) observer.observe(node.firstElementChild);
+    
+    return () => observer.disconnect();
+  }, [isExpanded]);
 
   const handleCopy = async () => {
     await copyToClipboard(code);
@@ -155,18 +207,20 @@ export function CodeBlock({
 
   return (
     <>
-      {isPlaying && (
-        <GameModal code={code} onClose={() => setIsPlaying(false)} />
-      )}
-      {isFullscreen && (
-        <FullscreenEditor
-          code={code}
-          language={language}
-          onClose={() => setIsFullscreen(false)}
-          fullMessageContent={fullMessageContent}
-          onAskAI={onAskAI}
-        />
-      )}
+      <Suspense fallback={null}>
+        {isPlaying && (
+          <GameModal code={code} onClose={() => setIsPlaying(false)} />
+        )}
+        {isFullscreen && (
+          <FullscreenEditor
+            code={code}
+            language={language}
+            onClose={() => setIsFullscreen(false)}
+            fullMessageContent={fullMessageContent}
+            onAskAI={onAskAI}
+          />
+        )}
+      </Suspense>
       <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong">
         <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans overflow-x-auto whitespace-nowrap custom-scrollbar gap-4">
           <div className="flex items-center gap-3">
@@ -240,22 +294,28 @@ export function CodeBlock({
               ref={codeContainerRef}
               className={`p-4 overflow-x-auto text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-96 overflow-y-auto' : ''}`}
             >
-              <SyntaxHighlighter
-                language={language}
-                style={vscDarkPlus}
-                customStyle={{ margin: 0, padding: 0, background: "transparent" }}
-                wrapLines={true}
-                showLineNumbers={true}
-                lineNumberStyle={{
-                  minWidth: "2.5em",
-                  paddingRight: "1em",
-                  color: "rgba(255,255,255,0.3)",
-                  textAlign: "right",
-                  userSelect: "none",
-                }}
-              >
-                {code}
-              </SyntaxHighlighter>
+              {code.length > 30000 ? (
+                 <pre className="m-0 p-0 bg-transparent text-[#d4d4d4] font-mono text-[13px] leading-relaxed whitespace-pre overflow-x-auto" style={{ tabSize: 2 }}>
+                   <code>{code}</code>
+                 </pre>
+              ) : (
+                <SyntaxHighlighter
+                  language={language}
+                  style={vscDarkPlus}
+                  customStyle={{ margin: 0, padding: 0, background: "transparent" }}
+                  wrapLines={true}
+                  showLineNumbers={true}
+                  lineNumberStyle={{
+                    minWidth: "2.5em",
+                    paddingRight: "1em",
+                    color: "rgba(255,255,255,0.3)",
+                    textAlign: "right",
+                    userSelect: "none",
+                  }}
+                >
+                  {code}
+                </SyntaxHighlighter>
+              )}
             </div>
             
             {isConstrained && isLongCode && (

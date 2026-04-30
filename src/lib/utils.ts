@@ -36,12 +36,16 @@ export const copyToClipboard = async (text: string) => {
 
 export function guessLanguage(code: string): string {
   const trimmed = code.trim();
+  if (/(<html|<head|<body|<div|<p|<span|<a |<button|<input)/i.test(trimmed)) {
+    return "html";
+  }
   if (/^\s*</.test(trimmed) && /<\/\w+>$/.test(trimmed)) {
     if (/html/i.test(trimmed) || /body/i.test(trimmed)) return "html";
     return "xml";
   }
-  if (/^import\s+.*from\s+['"]/m.test(trimmed) || /^export\s+/m.test(trimmed) || /const\s+\w+\s*=/m.test(trimmed)) {
+  if (/^import\s+.*from\s+['"]/m.test(trimmed) || /^export\s+/m.test(trimmed) || /const\s+\w+\s*=/m.test(trimmed) || /let\s+\w+\s*=/m.test(trimmed) || /function\s+\w+\s*\(/m.test(trimmed)) {
     if (/<[A-Z][a-zA-Z0-9]*\s*[^>]*>/.test(trimmed) || /className=/.test(trimmed)) return "tsx";
+    if (/<div|<span|<p/.test(trimmed)) return "jsx";
     return "javascript";
   }
   if (/def\s+\w+\s*\(/m.test(trimmed) || (/import\s+[a-z_]+/m.test(trimmed) && !/from/m.test(trimmed))) return "python";
@@ -50,8 +54,9 @@ export function guessLanguage(code: string): string {
   if (/^SELECT\s+/im.test(trimmed) || /^CREATE\s+TABLE/im.test(trimmed)) return "sql";
   if (/^[\w-]+\s*:\s*.+/m.test(trimmed) && !/\{/.test(trimmed)) return "yaml";
   if (/^\{.*\}$/s.test(trimmed) && /"\w+"\s*:/.test(trimmed)) return "json";
-  if (/^body\s*\{/im.test(trimmed) || /^[.#][\w-]+\s*\{/m.test(trimmed)) return "css";
+  if (/^body\s*\{/im.test(trimmed) || /^[.#][\w-]+\s*\{/m.test(trimmed) || /[.#][\w-]+\s*\{/m.test(trimmed)) return "css";
   if (/^#\s/.test(trimmed) || /^##\s/.test(trimmed) || /\[.*\]\(.*\)/.test(trimmed)) return "markdown";
   if (/^#!/m.test(trimmed) || /echo\s+/.test(trimmed)) return "bash";
+  if (/(print\(|console\.log)/.test(trimmed)) return "javascript";
   return "text";
 }
