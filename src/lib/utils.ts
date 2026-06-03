@@ -49,6 +49,7 @@ export function guessLanguage(code: string): string {
     return "javascript";
   }
   if (/def\s+\w+\s*\(/m.test(trimmed) || (/import\s+[a-z_]+/m.test(trimmed) && !/from/m.test(trimmed))) return "python";
+  if (/^local\s+\w+/m.test(trimmed) || /\bfunction\s*\w*\s*\(.*\)\s*.*\n.*end\b/is.test(trimmed) || /\b(require|print)\b/.test(trimmed) && /\bend\b/.test(trimmed)) return "lua";
   if (/public\s+class\s+/m.test(trimmed) || /System\.out\.println/m.test(trimmed)) return "java";
   if (/#include\s+</m.test(trimmed)) return "cpp";
   if (/^SELECT\s+/im.test(trimmed) || /^CREATE\s+TABLE/im.test(trimmed)) return "sql";

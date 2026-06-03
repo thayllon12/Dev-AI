@@ -14,7 +14,6 @@ import JSZip from "jszip";
 interface MessageBubbleProps {
   msg: any;
   isCodeMode: boolean;
-  themeColor: string;
   userPhoto?: string | null;
   onRegenerate?: (msg: any) => void;
   onContinue?: (msg: any) => void;
@@ -24,12 +23,13 @@ interface MessageBubbleProps {
   userSettings: any;
   onAnalyzeSecurity?: (code: string) => void;
   onAskAI?: (code: string) => void;
+  onMemorize?: (content: string) => void;
+  statusNode?: React.ReactNode;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   msg,
   isCodeMode,
-  themeColor,
   userPhoto,
   onRegenerate,
   onContinue,
@@ -39,6 +39,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   userSettings,
   onAnalyzeSecurity,
   onAskAI,
+  onMemorize,
+  statusNode,
 }) => {
   const isUser = msg.role === "user";
   const [copied, setCopied] = useState(false);
@@ -48,6 +50,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   const [previewFile, setPreviewFile] = useState<{ dataUrl: string; mimeType: string } | null>(null);
   const [isThinkExpanded, setIsThinkExpanded] = useState(false);
   const [isThinkVisible, setIsThinkVisible] = useState(true);
+  const [isUserTextExpanded, setIsUserTextExpanded] = useState(false);
 
   const actionsMenuRef = React.useRef<HTMLDivElement>(null);
 
@@ -125,26 +128,94 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     a.click();
   };
 
-  const toggleTTS = () => {
+  const getCleanReadableText = (text?: string) => {
+    if (!text) return "";
+    let clean = typeof text === 'string' ? text : String(text);
+    // Remove think blocks
+    clean = clean.replace(/<think>[\s\S]*?<\/think>/g, "");
+    // Remove code blocks
+    clean = clean.replace(/```[\s\S]*?```/g, " o trecho de código foi ocultado da leitura verbal. ");
+    // Convert some simple markdown
+    clean = clean.replace(/\*\*/g, "");
+    clean = clean.replace(/\#/g, "");
+    return clean;
+  };
+
+  const toggleTTS = async () => {
     if (isPlaying) {
       window.speechSynthesis.cancel();
+      // stop internal audio element if exists
+      const audioEl = document.getElementById(`audio-player-${msg.id}`) as HTMLAudioElement;
+      if (audioEl) {
+         audioEl.pause();
+         audioEl.currentTime = 0;
+      }
       setIsPlaying(false);
-    } else {
-      window.speechSynthesis.cancel(); // Clear any stuck speech
-      const text = getCleanText(msg.content) || "Sem conteúdo para ler.";
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = 'pt-BR';
-      utterance.onend = () => setIsPlaying(false);
-      utterance.onerror = (e) => {
-        console.error("Speech synthesis error", e);
-        setIsPlaying(false);
-      };
-      
-      // Browsers block TTS if it is not a direct result of user interaction
-      // which is broken by setTimeout.
-      window.speechSynthesis.speak(utterance);
-      setIsPlaying(true);
+      return;
     }
+
+    const text = getCleanReadableText(msg.content) || "Sem conteúdo para ler.";
+    setIsPlaying(true);
+
+    try {
+      const { getAI } = await import("../App");
+      const ai = getAI();
+      if (ai) {
+        // Attempt to use Gemini TTS
+        const response = await ai.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: `Leia o seguinte texto de forma expressiva e natural em português do Brasil, num tom amigável. Não leia blocos de código grandes se houver.\n\n${text.substring(0, 5000)}`,
+          config: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } }
+            }
+          }
+        });
+        
+        const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+        if (audioData) {
+          const audioUrl = `data:audio/wav;base64,${audioData}`;
+          let audioEl = document.getElementById(`audio-player-${msg.id}`) as HTMLAudioElement;
+          if (!audioEl) {
+             audioEl = document.createElement("audio");
+             audioEl.id = `audio-player-${msg.id}`;
+             document.body.appendChild(audioEl);
+          }
+          audioEl.src = audioUrl;
+          audioEl.onended = () => setIsPlaying(false);
+          audioEl.onerror = () => setIsPlaying(false);
+          audioEl.play();
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn("Gemini TTS failed, falling back to native.", e);
+    }
+
+    // Fallback to native
+    window.speechSynthesis.cancel(); // Clear any stuck speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'pt-BR';
+    utterance.rate = 1.05;
+    utterance.pitch = 0.9;
+    const voices = window.speechSynthesis.getVoices();
+    
+    // Preferred "Voz Laranja / Masculina do Google"
+    const selectedVoice = voices.find(v => v.lang.includes("pt-BR") && v.name.includes("Google") && (v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("masc")))
+      || voices.find(v => v.lang.includes("pt-BR") && (v.name.includes("Daniel") || v.name.includes("Antonio") || v.name.includes("Thiago") || v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("masc"))) 
+      || voices.find(v => v.lang.includes("pt-BR") && v.name.includes("Google"));
+
+    if (selectedVoice) {
+      utterance.voice = selectedVoice;
+    }
+    utterance.onend = () => setIsPlaying(false);
+    utterance.onerror = (e) => {
+      console.error("Speech synthesis error", e);
+      setIsPlaying(false);
+    };
+    
+    window.speechSynthesis.speak(utterance);
   };
 
   const handleDownloadProject = async () => {
@@ -182,6 +253,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     a.click();
     URL.revokeObjectURL(url);
   };
+
 
   let thinkContent = "";
   let mainContent = msg.content || "";
@@ -231,7 +303,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className={`flex flex-col gap-2 ${isUser ? "items-end text-right" : "items-start text-left"}`}
+        className={`flex flex-col gap-2 min-w-0 w-full max-w-full ${isUser ? "items-end text-right" : "items-start text-left"}`}
       >
         <div
           className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-lg overflow-hidden ${
@@ -251,11 +323,27 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           )}
         </div>
 
-        <div className={`flex flex-col max-w-full ${isUser ? "items-end" : "items-start"}`}>
+        <div className={`flex flex-col max-w-full min-w-0 ${isUser ? "items-end" : "items-start"}`}>
           <div className="flex items-center gap-2 mb-1 px-1">
-            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
-              {isUser ? (msg.authorName || "Você") : "Dev AI"}
-            </span>
+            {isUser ? (
+              <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
+                {msg.authorName || "Você"}
+              </span>
+            ) : (
+              <span className={`text-xs font-bold uppercase tracking-wider animate-pulse bg-clip-text text-transparent ${
+                userSettings?.mode === "Thinking" ? "bg-gradient-to-r from-red-400 via-rose-500 to-red-600" :
+                userSettings?.mode === "Student" ? "bg-gradient-to-r from-blue-400 via-indigo-500 to-cyan-400" :
+                userSettings?.mode === "Nano Banana 2" ? "bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500" :
+                "bg-gradient-to-r from-purple-400 via-fuchsia-500 to-purple-600"
+              }`}>
+                Dev AI
+              </span>
+            )}
+            {statusNode && (
+              <div className="ml-2 flex items-center">
+                {statusNode}
+              </div>
+            )}
           </div>
 
           <div
@@ -263,7 +351,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               isUser ? "text-text-primary flex justify-end" : "text-text-primary"
             }`}
           >
-            <div className={`flex flex-col gap-3 ${isUser ? "max-w-[85%]" : "w-full"}`}>
+            <div className={`flex flex-col gap-3 min-w-0 ${isUser ? "max-w-[85%]" : "w-full"}`}>
               {thinkContent && isThinkVisible && (
                 <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
                   <div className="flex items-center justify-between p-2.5 bg-bg-surface-hover/50">
@@ -295,14 +383,81 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               )}
               
               {isUser ? (
-                <div className="bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left select-text">
-                  <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
-                    {msg.content}
+                <div className="flex flex-col items-end w-full max-w-full">
+                  <div className={`bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left select-text markdown-body max-w-full break-words min-w-0 relative ${!isUserTextExpanded && msg.content.length > 500 ? "max-h-64 overflow-hidden" : "overflow-x-auto"}`}>
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        pre: ({ node, children, ...props }: any) => {
+                          if (React.isValidElement(children)) {
+                            const codeProps = children.props as any;
+                            const match = /language-(\w+)/.exec(codeProps.className || "");
+                            const codeString = String(codeProps.children).replace(/\n$/, "");
+                            const language = match ? match[1] : guessLanguage(codeString);
+                            return (
+                              <CodeBlock
+                                language={language}
+                                code={codeString}
+                                userSettings={userSettings}
+                                fullMessageContent={msg.content}
+                                onAnalyzeSecurity={onAnalyzeSecurity}
+                                onAskAI={onAskAI}
+                                isGenerating={msg.isGenerating}
+                              />
+                            );
+                          }
+                          return <pre {...props}>{children}</pre>;
+                        },
+                        code: ({ node, className, children, ...props }: any) => {
+                          return (
+                            <code
+                              className={`px-1.5 py-0.5 rounded text-sm font-mono border bg-transparent border-white/20 whitespace-pre-wrap break-words ${className || ""}`}
+                              {...props}
+                            >
+                              {children}
+                            </code>
+                          );
+                        },
+                        p: ({ children }) => <div className="mb-2 last:mb-0 leading-relaxed text-[15px]">{children}</div>,
+                        ul: ({ children }) => <ul className="list-disc pl-6 mb-2 space-y-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-6 mb-2 space-y-1">{children}</ol>,
+                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>,
+                        strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                        em: ({ children }) => <em className="italic">{children}</em>,
+                        img: ({ src, alt }) => {
+                          if (!src) return null;
+                          return (
+                            <img 
+                              src={src} 
+                              alt={alt || "Imagem"} 
+                              className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle my-2 hover:opacity-90 transition-opacity" 
+                              referrerPolicy="no-referrer" 
+                              onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
+                              title="Clique para expandir" 
+                            />
+                          );
+                        },
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                    {!isUserTextExpanded && msg.content.length > 500 && (
+                      <div className="absolute inset-x-0 bottom-0 h-24 bg-gradient-to-t from-bg-surface-hover to-transparent pointer-events-none" />
+                    )}
                   </div>
+                  {msg.content.length > 500 && (
+                    <button 
+                      onClick={() => setIsUserTextExpanded(!isUserTextExpanded)} 
+                      className="mt-2 text-xs font-medium text-text-muted hover:text-primary transition-colors px-2 py-1 rounded-md hover:bg-primary/10"
+                    >
+                      {isUserTextExpanded ? "Mostrar menos" : "Mostrar mais"}
+                    </button>
+                  )}
                 </div>
               ) : (
-                <div className="markdown-body select-text w-full max-w-full overflow-hidden">
-                  {(mainContent.length > 50000 && !mainContent.includes('blob:')) ? (
+                <div className="markdown-body select-text w-full max-w-full overflow-x-auto break-words min-w-0">
+                  {(mainContent.length > 250000 && !mainContent.includes('blob:')) ? (
                       (() => {
                         const parts = mainContent.split('```');
                         return parts.map((part, index) => {
@@ -315,7 +470,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                               code = part.substring(firstNewline + 1);
                             }
                             return (
-                              <CodeBlock 
+                              <CodeBlock
                                 key={index}
                                 language={language || guessLanguage(code.substring(0, 500))}
                                 code={code}
@@ -328,7 +483,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                             );
                           } else {
                             return (
-                              <div key={index} className="whitespace-pre-wrap font-sans text-[15px] leading-relaxed my-2">
+                              <div key={index} className="whitespace-pre-wrap break-words font-sans text-[15px] leading-relaxed my-2">
                                 {part}
                               </div>
                             );
@@ -362,7 +517,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     code: ({ node, className, children, ...props }: any) => {
                       return (
                         <code
-                          className={`px-1.5 py-0.5 rounded text-sm font-mono border ${
+                          className={`px-1.5 py-0.5 rounded text-sm font-mono border whitespace-pre-wrap break-words ${
                             isUser ? "bg-white/10 border-white/20" : "bg-bg-code border-border-subtle"
                           } ${className || ""}`}
                           {...props}
@@ -374,9 +529,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     p: ({ children }) => <div className="mb-4 last:mb-0 leading-relaxed">{children}</div>,
                     ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
                     ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
+                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
                     h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
                     h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0">{children}</h2>,
                     h3: ({ children }) => <h3 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h3>,
+                    table: ({ children }) => <div className="overflow-x-auto w-full mb-4"><table className="min-w-full divide-y divide-border-subtle">{children}</table></div>,
                     blockquote: ({ children }) => (
                       <blockquote className={`border-l-4 pl-4 italic my-4 ${isUser ? "border-white/30" : "border-primary/30"}`}>
                         {children}
@@ -391,60 +548,26 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                       }
                       return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>;
                     },
+                    strong: ({ children }) => <strong className="font-bold">{children}</strong>,
+                    em: ({ children }) => <em className="italic">{children}</em>,
                     img: ({ src, alt }) => {
                       if (!src) return null;
                       const isGeneratedImage = src.startsWith("data:image") || src.startsWith("https://image.pollinations.ai");
                       return (
-                        <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong w-fit max-w-full">
-                          <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans border-b border-border-strong">
-                            <div className="flex items-center gap-2">
-                              <ImageIcon size={14} className="text-primary" />
-                              <span className="uppercase font-semibold text-text-primary">IMAGEM</span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <button
-                                onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })}
-                                className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
-                                title="Expandir Imagem"
-                              >
-                                <Maximize2 size={14} /> Tela Cheia
-                              </button>
-                              {isGeneratedImage && (
-                                <>
-                                  <button
-                                    onClick={() => handleDownloadImage(src, alt || "imagem")}
-                                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
-                                    title="Baixar Imagem"
-                                  >
-                                    <Download size={14} /> Download
-                                  </button>
-                                  <button
-                                    onClick={() => handleCopyImage(src)}
-                                    className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
-                                    title="Copiar Imagem"
-                                  >
-                                    {copied ? <CheckCheck size={14} className="text-emerald-500" /> : <Copy size={14} />} Copiar
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-                          
-                          <div className="relative bg-black/20 flex flex-col items-center justify-center p-2 sm:p-4">
-                            <img 
-                              src={src} 
-                              alt={alt || "Imagem"} 
-                              className="max-w-full h-auto cursor-pointer rounded-lg shadow-xl" 
-                              referrerPolicy="no-referrer" 
-                              onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
-                              title="Clique para expandir" 
-                            />
-                            {isGeneratedImage && (
-                               <div className="absolute bottom-4 right-4 sm:bottom-6 sm:right-6 w-8 h-8 opacity-50 hover:opacity-100 transition-opacity select-none drop-shadow-md flex items-center justify-center p-1.5 rounded-full bg-black/40 backdrop-blur-md pointer-events-none">
-                                <AILogo mode={userSettings?.mode} className="w-full h-full" />
-                              </div>
-                            )}
-                          </div>
+                        <div className="relative group inline-block max-w-full my-4">
+                          <img 
+                            src={src} 
+                            alt={alt || "Imagem"} 
+                            className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle group-hover:opacity-90 transition-opacity" 
+                            referrerPolicy="no-referrer" 
+                            onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
+                            title="Clique para expandir" 
+                          />
+                          {isGeneratedImage && (
+                            <div className="absolute bottom-2 right-2 w-6 h-6 opacity-30 hover:opacity-100 transition-opacity select-none drop-shadow-md flex items-center justify-center p-1 rounded-full bg-black/40 backdrop-blur-md pointer-events-none">
+                             <AILogo mode={userSettings?.mode} className="w-full h-full" />
+                           </div>
+                          )}
                         </div>
                       );
                     },
@@ -456,7 +579,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               </div>
               )}
               
-              {isLastMessage && !isUser && onContinue && msg.content && msg.content.length > 200 && (
+              {isLastMessage && !isUser && onContinue && msg.content && (
                 (() => {
                   const isCodeBlockOpen = (msg.content.match(/```/g) || []).length % 2 !== 0;
                   const endsAbruptly = msg.content.length > 2000 && !msg.content.trim().match(/(\.|!|\?|```|>|}|\])$/);
@@ -551,7 +674,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className={`absolute top-full mt-1 w-48 py-1 bg-bg-surface border border-border-subtle rounded-xl shadow-xl z-10 flex flex-col ${
+                  className={`absolute bottom-full mb-1 w-48 py-1 bg-bg-surface border border-border-subtle rounded-xl shadow-xl z-50 flex flex-col ${
                     isUser ? "right-0" : "left-0"
                   }`}
                 >
@@ -576,6 +699,19 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     <ExternalLink size={16} />
                     <span>Selecionar texto</span>
                   </button>
+
+                  {onMemorize && (
+                    <button
+                      onClick={() => {
+                        onMemorize(msg.text);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-blue-500 hover:bg-bg-surface-hover transition-colors text-left"
+                    >
+                      <Brain size={16} />
+                      <span>Salvar na Memória</span>
+                    </button>
+                  )}
 
                   {!isUser && onContinue && (
                     <button
@@ -688,7 +824,6 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
     prevProps.msg.streamingThinkContent === nextProps.msg.streamingThinkContent &&
     attachmentsEqual(prevProps.msg.attachments, nextProps.msg.attachments) &&
     prevProps.isCodeMode === nextProps.isCodeMode &&
-    prevProps.themeColor === nextProps.themeColor &&
     prevProps.isLastMessage === nextProps.isLastMessage
   );
 });

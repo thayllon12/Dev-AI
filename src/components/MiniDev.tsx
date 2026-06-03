@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion, AnimatePresence } from "motion/react";
 import { Bot, X, Mic, MicOff, MessageSquare, PictureInPicture } from "lucide-react";
 import { cn } from "../lib/utils";
 import { toast } from "sonner";

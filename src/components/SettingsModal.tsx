@@ -31,15 +31,16 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [logFilter, setLogFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
   const [copiedLogs, setCopiedLogs] = useState(false);
 
-  const handleMouseDown = (e: React.MouseEvent) => {
+  const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
     setIsResizing(true);
-    e.preventDefault();
+    // e.preventDefault(); // removed to fix passive event listener warnings on touch
   };
 
   useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
+    const handleMouseMove = (e: MouseEvent | TouchEvent) => {
       if (!isResizing) return;
-      const newHeight = window.innerHeight - e.clientY;
+      const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+      const newHeight = window.innerHeight - clientY;
       setHeight(Math.max(300, Math.min(newHeight, window.innerHeight * 0.95)));
     };
 
@@ -48,13 +49,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     };
 
     if (isResizing) {
-      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mousemove", handleMouseMove as any);
       window.addEventListener("mouseup", handleMouseUp);
+      window.addEventListener("touchmove", handleMouseMove as any, { passive: false });
+      window.addEventListener("touchend", handleMouseUp);
     }
 
     return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mousemove", handleMouseMove as any);
       window.removeEventListener("mouseup", handleMouseUp);
+      window.removeEventListener("touchmove", handleMouseMove as any);
+      window.removeEventListener("touchend", handleMouseUp);
     };
   }, [isResizing]);
 
@@ -77,6 +82,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         <div
           className="h-6 flex items-center justify-center cursor-ns-resize hover:bg-bg-surface-hover transition-colors shrink-0"
           onMouseDown={handleMouseDown}
+          onTouchStart={handleMouseDown}
         >
           <div className="w-12 h-1.5 bg-border-strong rounded-full" />
         </div>
@@ -97,33 +103,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-          {/* API Key Section */}
-          <div className="pb-6 border-b border-border-strong">
-            <label className="block text-sm font-bold text-text-secondary mb-2 uppercase tracking-wider">
-              Chave API Personalizada
-            </label>
-            <p className="text-xs text-text-muted mb-4">
-              Se você atingir o limite de uso gratuito, pode usar sua própria chave API do Google AI Studio.
-            </p>
-            <button
-              onClick={handleSelectKey}
-              className={cn(
-                "w-full py-3 px-4 rounded-xl border flex items-center justify-center gap-2 transition-all font-bold text-sm shadow-sm",
-                hasCustomKey
-                  ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-500 hover:bg-emerald-500/20"
-                  : "bg-primary/10 border-primary/50 text-primary hover:bg-primary/20"
-              )}
-            >
-              <Key size={16} />
-              {hasCustomKey ? "Chave API Configurada" : "Configurar Chave API"}
-            </button>
-            {hasCustomKey && (
-              <p className="text-[10px] text-emerald-500/70 mt-2 text-center font-medium">
-                Sua chave personalizada está sendo usada para todas as requisições.
-              </p>
-            )}
-          </div>
-
           {/* Themes Section */}
           <div className="pt-4 border-t border-border-strong">
             <label className="block text-sm font-bold text-text-secondary mb-3 uppercase tracking-wider flex items-center gap-2">
@@ -137,7 +116,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {[
                     { id: "light", icon: <Sun size={14} />, label: "Claro" },
                     { id: "dark", icon: <Moon size={14} />, label: "Escuro" },
-                    { id: "auto", icon: <Monitor size={14} />, label: "Sistema" },
+                    { id: "auto", icon: <Monitor size={14} />, label: "Sistema" }
                   ].map((t) => (
                     <button
                       key={t.id}
@@ -189,12 +168,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Toggles Section */}
           <div className="space-y-4 pt-4 border-t border-border-strong">
             {[
-              {
-                id: "fullscreenEditor",
-                label: "Editor em Tela Cheia",
-                desc: "Abre blocos de código em um editor expansível.",
-                icon: <Code2 size={18} />,
-              },
               {
                 id: "notificationsEnabled",
                 label: "Notificações",

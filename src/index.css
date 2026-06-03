@@ -1,5 +1,6 @@
-@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Roboto:wght@400;500;700&family=Open+Sans:wght@400;600;700&family=JetBrains+Mono:wght@400;500;700&family=Fira+Code:wght@400;500;700&family=Playfair+Display:wght@400;700;900&display=swap');
+@import "tailwindcss";
+@import "./dracula.css";
 
 @theme {
   --color-bg-main: var(--bg-main);
@@ -42,6 +43,9 @@
   --border-subtle: #e4e4e7;
   --border-strong: #d4d4d8;
 
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+
   --font-size-base: 16px;
   --font-family-base: 'Inter', sans-serif;
 }
@@ -67,6 +71,18 @@ body {
   background: #4f4f4f;
 }
 
+.markdown-body img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  margin: 1rem 0;
+}
+
+.markdown-body a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
 :root.dark {
   /* Dark Theme */
   --bg-main: #212121;
@@ -85,6 +101,9 @@ body {
   
   --border-subtle: #3f3f46;
   --border-strong: #52525b;
+
+  --primary: #3b82f6;
+  --primary-hover: #2563eb;
 }
 
 :root.theme-blue {

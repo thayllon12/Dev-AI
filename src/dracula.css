@@ -1,0 +1,72 @@
+[data-theme="dracula"] {
+  /* Dark Theme Dracula Baseline */
+  --bg-main: #282a36;
+  --bg-sidebar: #21222c;
+  --bg-surface: #44475a;
+  --bg-surface-hover: #6272a4;
+  --bg-code: #21222c;
+  --bg-code-header: #282a36;
+  --bg-modal: #282a36;
+  --bg-modal-footer: #21222c;
+  
+  --text-primary: #f8f8f2;
+  --text-secondary: #f8f8f2;
+  --text-tertiary: #8be9fd;
+  --text-muted: #6272a4;
+  
+  --border-subtle: #44475a;
+  --border-strong: #6272a4;
+
+  --primary: #bd93f9;
+  --primary-hover: #ff79c6;
+  --primary-focus: #ffb86c;
+  
+  background-color: var(--bg-main);
+  color: var(--text-primary);
+}
+
+/* 
+ * Classes adicionais de tema (conforme solicitado).
+ * Nota: O app usa utilitários Tailwind que herdam as variáveis acima,
+ * mas essas classes podem ser usadas explicitamente.
+ */
+
+/* Chat Bubbles */
+[data-theme="dracula"] .chat-bubble-user {
+  background-color: var(--primary) !important;
+  color: var(--bg-main) !important;
+}
+
+[data-theme="dracula"] .chat-bubble-ai {
+  background-color: var(--bg-surface) !important;
+  color: var(--text-primary) !important;
+  border: 1px solid var(--border-subtle) !important;
+}
+
+/* Input Area */
+[data-theme="dracula"] .chat-input-wrapper {
+  background-color: var(--bg-surface) !important;
+  border-color: var(--border-strong) !important;
+}
+
+[data-theme="dracula"] textarea.chat-input {
+  background-color: transparent !important;
+  color: var(--text-primary) !important;
+}
+
+[data-theme="dracula"] textarea.chat-input::placeholder {
+  color: var(--text-muted) !important;
+}
+
+/* Botões */
+[data-theme="dracula"] .chat-button {
+  background-color: var(--primary) !important;
+  color: var(--bg-main) !important;
+  transition: all 0.2s ease;
+}
+
+[data-theme="dracula"] .chat-button:hover:not(:disabled) {
+  background-color: var(--primary-hover) !important;
+  color: var(--text-primary) !important;
+}
+

@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jogo da Memória 🧠</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .perspective {
+      perspective: 1000px;
+    }
+    .transform-style-p3d {
+      transform-style: preserve-3d;
+    }
+    .backface-hidden {
+      backface-visibility: hidden;
+    }
+    .rotate-y-180 {
+      transform: rotateY(180deg);
+    }
+  </style>
+</head>
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center font-sans">
+  
+  <!-- Modo Introdução -->
+  <div id="intro-mode" class="absolute inset-0 flex flex-col items-center justify-center bg-gray-900 z-50 transition-opacity duration-500">
+    <h1 class="text-6xl text-emerald-400 font-extrabold mb-4 drop-shadow-lg text-center tracking-tighter">
+      Memory<span class="text-white">Match</span>
+    </h1>
+    <p class="text-gray-400 text-lg mb-8 max-w-md text-center">Encontre todos os pares em 60 segundos. Prepare-se para testar sua concentração!</p>
+    <button id="start-btn" class="px-8 py-4 bg-emerald-500 hover:bg-emerald-400 text-gray-900 font-bold rounded-2xl shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all transform hover:scale-105 active:scale-95 text-xl">
+      Começar Jogo
+    </button>
+  </div>
+
+  <!-- Modo Jogo -->
+  <div id="game-mode" class="hidden flex-col items-center p-6 w-full max-w-4xl opacity-0 transition-opacity duration-500">
+    
+    <div class="flex justify-between w-full max-w-2xl mb-8 items-end border-b border-gray-700 pb-4">
+      <div>
+        <h2 class="text-3xl font-bold text-white tracking-tight">Tempo</h2>
+        <p id="timer" class="text-5xl font-mono text-emerald-400">60s</p>
+      </div>
+      <div class="text-right">
+        <h2 class="text-xl font-bold text-gray-400 tracking-tight">Erros</h2>
+        <p id="errors" class="text-3xl font-mono text-red-400">0</p>
+      </div>
+    </div>
+
+    <!-- Grid de Cartas -->
+    <div id="card-grid" class="grid grid-cols-4 gap-4 md:gap-6 perspective w-full max-w-2xl">
+      <!-- Cartas injetadas via JS -->
+    </div>
+
+    <button id="restart-btn" class="mt-10 px-6 py-3 bg-gray-700 hover:bg-gray-600 text-white font-semibold rounded-xl transition-all hidden">
+      Jogar Novamente
+    </button>
+  </div>
+
+  <!-- Win/Lose Overlay -->
+  <div id="result-overlay" class="fixed inset-0 bg-black/80 z-40 hidden flex-col items-center justify-center backdrop-blur-sm">
+    <h1 id="result-title" class="text-6xl font-bold mb-4 text-white"></h1>
+    <p id="result-desc" class="text-xl text-gray-300 mb-8"></p>
+    <button id="overlay-restart-btn" class="px-10 py-4 bg-emerald-500 hover:bg-emerald-400 text-gray-900 font-bold rounded-2xl transition-all text-xl">
+      Tentar Novamente
+    </button>
+  </div>
+
+  <script>
+    const EMOTICONS = ['🦊', '🐸', '🐼', '🐯', '🦞', '🐙', '👾', '🚀'];
+    let cards = [...EMOTICONS, ...EMOTICONS];
+    let flippedCards = [];
+    let matchedPairs = 0;
+    let errors = 0;
+    let timer = 60;
+    let interval;
+    let isPlaying = false;
+
+    const introMode = document.getElementById('intro-mode');
+    const gameMode = document.getElementById('game-mode');
+    const startBtn = document.getElementById('start-btn');
+    const cardGrid = document.getElementById('card-grid');
+    const timerEl = document.getElementById('timer');
+    const errorsEl = document.getElementById('errors');
+    const resultOverlay = document.getElementById('result-overlay');
+    const resultTitle = document.getElementById('result-title');
+    const resultDesc = document.getElementById('result-desc');
+    const restartBtn = document.getElementById('restart-btn');
+    const overlayRestartBtn = document.getElementById('overlay-restart-btn');
+
+    startBtn.addEventListener('click', startGame);
+    restartBtn.addEventListener('click', startGame);
+    overlayRestartBtn.addEventListener('click', startGame);
+
+    function startGame() {
+      // Setup UI
+      introMode.classList.add('opacity-0');
+      setTimeout(() => {
+        introMode.classList.add('hidden');
+        gameMode.classList.remove('hidden');
+        resultOverlay.classList.add('hidden');
+        setTimeout(() => gameMode.classList.remove('opacity-0'), 50);
+      }, 500);
+
+      // Reset state
+      matchedPairs = 0;
+      errors = 0;
+      timer = 60;
+      flippedCards = [];
+      isPlaying = true;
+      errorsEl.textContent = '0';
+      timerEl.textContent = '60s';
+      timerEl.classList.remove('text-red-500');
+      timerEl.classList.add('text-emerald-400');
+      restartBtn.classList.add('hidden');
+
+      // Shuffle logic
+      cards.sort(() => 0.5 - Math.random());
+
+      // Render cards
+      cardGrid.innerHTML = '';
+      cards.forEach((symbol, index) => {
+        const card = document.createElement('div');
+        card.className = 'relative w-full aspect-[3/4] cursor-pointer transform-style-p3d transition-transform duration-500 card-unflipped';
+        card.dataset.symbol = symbol;
+        card.dataset.index = index;
+
+        // Front (back of the card visually)
+        const front = document.createElement('div');
+        front.className = 'absolute inset-0 bg-gray-800 rounded-2xl flex items-center justify-center backface-hidden shadow-lg border border-gray-700 hover:bg-gray-700 transition-colors';
+        front.innerHTML = `<span class="text-4xl text-gray-600 opacity-50">?</span>`;
+
+        // Back (face of the card)
+        const back = document.createElement('div');
+        back.className = 'absolute inset-0 bg-emerald-500 rounded-2xl flex items-center justify-center backface-hidden rotate-y-180 shadow-[0_0_20px_rgba(16,185,129,0.3)] border-2 border-emerald-400';
+        back.innerHTML = `<span class="text-5xl drop-shadow-md">${symbol}</span>`;
+
+        card.appendChild(front);
+        card.appendChild(back);
+        
+        card.addEventListener('click', () => flipCard(card));
+        cardGrid.appendChild(card);
+      });
+
+      clearInterval(interval);
+      interval = setInterval(updateTimer, 1000);
+    }
+
+    function flipCard(card) {
+      if (!isPlaying || flippedCards.length >= 2 || card.classList.contains('rotate-y-180') || card.classList.contains('matched')) {
+        return;
+      }
+
+      card.classList.add('rotate-y-180');
+      flippedCards.push(card);
+
+      if (flippedCards.length === 2) {
+        checkMatch();
+      }
+    }
+
+    function checkMatch() {
+      const [card1, card2] = flippedCards;
+      const match = card1.dataset.symbol === card2.dataset.symbol;
+
+      if (match) {
+        matchedPairs++;
+        card1.classList.add('matched');
+        card2.classList.add('matched');
+        flippedCards = [];
+        
+        if (matchedPairs === EMOTICONS.length) {
+          endGame(true);
+        }
+      } else {
+        errors++;
+        errorsEl.textContent = errors;
+        setTimeout(() => {
+          card1.classList.remove('rotate-y-180');
+          card2.classList.remove('rotate-y-180');
+          flippedCards = [];
+        }, 1000);
+      }
+    }
+
+    function updateTimer() {
+      if (!isPlaying) return;
+      timer--;
+      timerEl.textContent = `${timer}s`;
+      
+      if (timer <= 10) {
+        timerEl.classList.remove('text-emerald-400');
+        timerEl.classList.add('text-red-500');
+      }
+
+      if (timer <= 0) {
+        endGame(false);
+      }
+    }
+
+    function endGame(won) {
+      isPlaying = false;
+      clearInterval(interval);
+      
+      resultTitle.textContent = won ? 'Vitória! 🎉' : 'Tempo Esgotado ⏰';
+      resultTitle.className = `text-6xl font-bold mb-4 ${won ? 'text-emerald-400' : 'text-red-500'}`;
+      resultDesc.textContent = won ? `Você encontrou todos os pares com ${errors} erros!` : 'Não foi dessa vez. Tente ser mais rápido.';
+      
+      resultOverlay.classList.remove('hidden');
+      resultOverlay.classList.add('flex');
+    }
+  </script>
+</body>
+</html>

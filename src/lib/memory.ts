@@ -38,12 +38,12 @@ function cosineSimilarity(A: number[], B: number[]) {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-export async function saveToMemory(text: string, apiKey?: string) {
+export async function saveToMemory(text: string) {
   try {
     if (!text || text.trim().length < 10) return; // Ignore very short texts
     
     // 1. Get Embedding
-    const ai = getAI(apiKey);
+    const ai = getAI();
     const result = await ai.models.embedContent({
         model: 'gemini-embedding-2-preview',
         contents: [text],
@@ -73,9 +73,9 @@ export async function saveToMemory(text: string, apiKey?: string) {
   }
 }
 
-export async function searchMemory(query: string, apiKey?: string, topK: number = 3): Promise<string[]> {
+export async function searchMemory(query: string, topK: number = 3): Promise<string[]> {
   try {
-    const ai = getAI(apiKey);
+    const ai = getAI();
     const result = await ai.models.embedContent({
         model: 'gemini-embedding-2-preview',
         contents: [query],

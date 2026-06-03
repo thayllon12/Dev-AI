@@ -12,10 +12,10 @@ import {
   ShieldAlert,
   ArrowDown
 } from "lucide-react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { copyToClipboard } from "../lib/utils";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { toast } from "sonner";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 
 const lazyWithRetry = (componentImport: () => Promise<any>) => 
   lazy(async () => {
@@ -34,6 +34,7 @@ const lazyWithRetry = (componentImport: () => Promise<any>) =>
       throw error;
     }
   });
+
 
 const FullscreenEditor = lazyWithRetry(() => import("./FullscreenEditor").then(m => ({ default: m.FullscreenEditor })));
 const GameModal = lazyWithRetry(() => import("./GameModal").then(m => ({ default: m.GameModal })));
@@ -56,16 +57,20 @@ export function CodeBlock({
   isGenerating?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(!!isGenerating);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isConstrained, setIsConstrained] = useState(true);
   const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "success">("idle");
 
   const codeContainerRef = useRef<HTMLDivElement>(null);
-  const isScrolledToBottomRef = useRef(true);
+  const scrollPositionRef = useRef<number>(0);
 
-  const isLongCode = code.split("\n").length > 15; // Define threshould for large code
+  const isLongCode = code.split("\n").length > 15;
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    scrollPositionRef.current = e.currentTarget.scrollTop;
+  };
 
   const scrollToBottom = () => {
     if (codeContainerRef.current) {
@@ -73,38 +78,28 @@ export function CodeBlock({
         top: codeContainerRef.current.scrollHeight,
         behavior: "smooth"
       });
-      isScrolledToBottomRef.current = true;
+      scrollPositionRef.current = codeContainerRef.current.scrollHeight;
     }
   };
 
   useEffect(() => {
-    const handleScroll = () => {
-      if (codeContainerRef.current) {
-        const { scrollTop, scrollHeight, clientHeight } = codeContainerRef.current;
-        isScrolledToBottomRef.current = scrollHeight - scrollTop - clientHeight <= 40;
+    if (isGenerating && codeContainerRef.current) {
+      const { scrollTop, scrollHeight, clientHeight } = codeContainerRef.current;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100; // 100px tolerance
+      
+      if (isNearBottom) {
+        // Use animation frame to ensure DOM has painted the new text
+        requestAnimationFrame(() => {
+          if (codeContainerRef.current) {
+             codeContainerRef.current.scrollTo({
+               top: codeContainerRef.current.scrollHeight,
+               behavior: "auto" // smooth can lag behind fast generation
+             });
+          }
+        });
       }
-    };
-    const node = codeContainerRef.current;
-    if (node) node.addEventListener("scroll", handleScroll);
-    return () => { if (node) node.removeEventListener("scroll", handleScroll); };
-  }, [isExpanded]);
-
-  useEffect(() => {
-    const node = codeContainerRef.current;
-    if (!node) return;
-    
-    // Using ResizeObserver to enforce stick-to-bottom
-    const observer = new ResizeObserver(() => {
-      if (isScrolledToBottomRef.current) {
-        node.scrollTop = node.scrollHeight;
-      }
-    });
-    
-    observer.observe(node);
-    if (node.firstElementChild) observer.observe(node.firstElementChild);
-    
-    return () => observer.disconnect();
-  }, [isExpanded]);
+    }
+  }, [code, isGenerating]);
 
   const handleCopy = async () => {
     await copyToClipboard(code);
@@ -166,50 +161,11 @@ export function CodeBlock({
     }
   };
 
-  if (userSettings?.fullscreenEditor) {
-    return (
-      <>
-        {isFullscreen && (
-          <FullscreenEditor
-            code={code}
-            language={language}
-            onClose={() => setIsFullscreen(false)}
-            fullMessageContent={fullMessageContent}
-            onAskAI={onAskAI}
-          />
-        )}
-        <div
-          className="my-2 flex items-center gap-3 p-3 bg-bg-surface border border-border-strong rounded-xl hover:bg-bg-surface-hover transition-all cursor-pointer group"
-          onClick={() => setIsFullscreen(true)}
-        >
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center text-primary group-hover:scale-110 transition-transform">
-            <File size={20} />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-text-primary truncate uppercase">
-              {language || "arquivo"}
-            </div>
-            <div className="text-xs text-text-muted">
-              Clique para abrir o código
-            </div>
-          </div>
-          <button 
-            className="p-2 text-text-muted hover:text-primary transition-colors"
-            aria-label="Abrir código em tela cheia"
-            title="Abrir código em tela cheia"
-          >
-            <ExternalLink size={18} />
-          </button>
-        </div>
-      </>
-    );
-  }
-
   return (
     <>
       <Suspense fallback={null}>
         {isPlaying && (
-          <GameModal code={code} onClose={() => setIsPlaying(false)} />
+          <GameModal code={code} onClose={() => setIsPlaying(false)} userSettings={userSettings} />
         )}
         {isFullscreen && (
           <FullscreenEditor
@@ -218,10 +174,11 @@ export function CodeBlock({
             onClose={() => setIsFullscreen(false)}
             fullMessageContent={fullMessageContent}
             onAskAI={onAskAI}
+            userSettings={userSettings}
           />
         )}
       </Suspense>
-      <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong">
+      <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong w-full max-w-full min-w-0">
         <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans overflow-x-auto whitespace-nowrap custom-scrollbar gap-4">
           <div className="flex items-center gap-3">
             <span className="uppercase font-semibold">{language || "text"}</span>
@@ -292,28 +249,30 @@ export function CodeBlock({
           <div className="relative group">
             <div 
               ref={codeContainerRef}
-              className={`p-4 overflow-x-auto text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-96 overflow-y-auto' : ''}`}
+              onScroll={handleScroll}
+              className={`p-4 overflow-x-auto overscroll-contain text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-[600px] overflow-y-auto' : ''}`}
             >
-              {code.length > 30000 ? (
-                 <pre className="m-0 p-0 bg-transparent text-[#d4d4d4] font-mono text-[13px] leading-relaxed whitespace-pre overflow-x-auto" style={{ tabSize: 2 }}>
+              {code.length > 500000 ? (
+                 <pre className="m-0 p-0 bg-transparent text-[#d4d4d4] font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words overflow-x-auto" style={{ tabSize: 2 }}>
                    <code>{code}</code>
                  </pre>
               ) : (
                 <SyntaxHighlighter
-                  language={language}
-                  style={vscDarkPlus}
-                  customStyle={{ margin: 0, padding: 0, background: "transparent" }}
-                  wrapLines={true}
-                  showLineNumbers={true}
-                  lineNumberStyle={{
-                    minWidth: "2.5em",
-                    paddingRight: "1em",
-                    color: "rgba(255,255,255,0.3)",
-                    textAlign: "right",
-                    userSelect: "none",
-                  }}
-                >
-                  {code}
+                   language={language === "luau" ? "lua" : language}
+                   style={vscDarkPlus}
+                   customStyle={{ margin: 0, padding: 0, background: "transparent" }}
+                   wrapLines={true}
+                   wrapLongLines={true}
+                   showLineNumbers={true}
+                   lineNumberStyle={{
+                     minWidth: "2.5em",
+                     paddingRight: "1em",
+                     color: "rgba(255,255,255,0.3)",
+                     textAlign: "right",
+                     userSelect: "none"
+                   }}
+                 >
+                   {code}
                 </SyntaxHighlighter>
               )}
             </div>
