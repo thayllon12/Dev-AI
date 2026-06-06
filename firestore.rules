@@ -192,7 +192,7 @@ service cloud.firestore {
       match /sharedChats/{chatId} {
         allow read: if isOwner(userId);
         allow create: if isAuthenticated(); // Anyone can share a chat with this user
-        allow update: if isOwner(userId);
+        allow update: if isOwner(userId) || (isAuthenticated() && resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == request.auth.uid);
         allow delete: if isOwner(userId) || (isAuthenticated() && resource.data.ownerId == request.auth.uid);
       }
 

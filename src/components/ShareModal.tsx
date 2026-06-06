@@ -133,7 +133,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
           mode: chatData.mode || "Dev AI",
           createdAt: new Date(),
           updatedAt: new Date()
-        });
+        }, { merge: true });
       }
       
       await copyToClipboard(shareUrl);

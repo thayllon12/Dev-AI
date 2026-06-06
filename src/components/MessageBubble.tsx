@@ -24,7 +24,8 @@ interface MessageBubbleProps {
   onAnalyzeSecurity?: (code: string) => void;
   onAskAI?: (code: string) => void;
   onMemorize?: (content: string) => void;
-  statusNode?: React.ReactNode;
+  generationTimerNode?: React.ReactNode;
+  generationStepsNode?: React.ReactNode;
 }
 
 export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
@@ -40,7 +41,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
   onAnalyzeSecurity,
   onAskAI,
   onMemorize,
-  statusNode,
+  generationTimerNode,
+  generationStepsNode,
 }) => {
   const isUser = msg.role === "user";
   const [copied, setCopied] = useState(false);
@@ -274,6 +276,142 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
 
   const hasCodeBlocks = msg.content && typeof msg.content === 'string' && msg.content.includes("```");
 
+  const msgStateRef = React.useRef({ content: msg.content, isGenerating: msg.isGenerating });
+  React.useEffect(() => {
+    msgStateRef.current = { content: msg.content, isGenerating: msg.isGenerating };
+  }, [msg.content, msg.isGenerating]);
+
+  const aiMarkdownComponents = React.useMemo<any>(() => ({
+    pre: ({ node, children, ...props }: any) => {
+      if (React.isValidElement(children)) {
+        const codeProps = children.props as any;
+        const match = /language-(\w+)/.exec(codeProps.className || "");
+        const codeString = String(codeProps.children).replace(/\n$/, "");
+        const language = match ? match[1] : guessLanguage(codeString);
+        return (
+          <CodeBlock
+            language={language}
+            code={codeString}
+            userSettings={userSettings}
+            fullMessageContent={msgStateRef.current.content}
+            onAnalyzeSecurity={onAnalyzeSecurity}
+            onAskAI={onAskAI}
+            isGenerating={msgStateRef.current.isGenerating}
+          />
+        );
+      }
+      return <pre {...props}>{children}</pre>;
+    },
+    code: ({ node, className, children, ...props }: any) => {
+      return (
+        <code
+          className={`px-1.5 py-0.5 rounded text-sm font-mono border whitespace-pre-wrap break-words bg-bg-code border-border-subtle ${className || ""}`}
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    },
+    p: ({ children }: any) => <div className="mb-4 last:mb-0 leading-relaxed">{children}</div>,
+    ul: ({ children }: any) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
+    ol: ({ children }: any) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
+    li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
+    h1: ({ children }: any) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
+    h2: ({ children }: any) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0">{children}</h2>,
+    h3: ({ children }: any) => <h3 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h3>,
+    table: ({ children }: any) => <div className="overflow-x-auto w-full mb-4"><table className="min-w-full divide-y divide-border-subtle">{children}</table></div>,
+    blockquote: ({ children }: any) => (
+      <blockquote className="border-l-4 pl-4 italic my-4 border-primary/30">
+        {children}
+      </blockquote>
+    ),
+    a: ({ href, children }: any) => {
+      if (href?.startsWith('blob:') && String(children).includes('VIDEO_BLOB')) {
+        return <video controls src={href} className="max-w-full rounded-xl border border-border-strong shadow-lg my-4" />;
+      }
+      if (href?.startsWith('blob:') && String(children).includes('AUDIO_BLOB')) {
+        return <audio controls src={href} className="w-full my-4" />;
+      }
+      return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>;
+    },
+    strong: ({ children }: any) => <strong className="font-bold">{children}</strong>,
+    em: ({ children }: any) => <em className="italic">{children}</em>,
+    img: ({ src, alt }: any) => {
+      if (!src) return null;
+      const isGeneratedImage = src.startsWith("data:image") || src.startsWith("https://image.pollinations.ai");
+      return (
+        <div className="relative group inline-block max-w-full my-4">
+          <img 
+            src={src} 
+            alt={alt || "Imagem"} 
+            className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle group-hover:opacity-90 transition-opacity" 
+            referrerPolicy="no-referrer" 
+            onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
+            title="Clique para expandir" 
+          />
+          {isGeneratedImage && (
+            <div className="absolute bottom-2 right-2 w-6 h-6 opacity-30 hover:opacity-100 transition-opacity select-none drop-shadow-md flex items-center justify-center p-1 rounded-full bg-black/40 backdrop-blur-md pointer-events-none">
+             <span className="text-white text-xs font-bold">AI</span>
+           </div>
+          )}
+        </div>
+      );
+    },
+  }), [userSettings, onAnalyzeSecurity, onAskAI]);
+
+  const userMarkdownComponents = React.useMemo<any>(() => ({
+    pre: ({ node, children, ...props }: any) => {
+      if (React.isValidElement(children)) {
+        const codeProps = children.props as any;
+        const match = /language-(\w+)/.exec(codeProps.className || "");
+        const codeString = String(codeProps.children).replace(/\n$/, "");
+        const language = match ? match[1] : guessLanguage(codeString);
+        return (
+          <CodeBlock
+            language={language}
+            code={codeString}
+            userSettings={userSettings}
+            fullMessageContent={msgStateRef.current.content}
+            onAnalyzeSecurity={onAnalyzeSecurity}
+            onAskAI={onAskAI}
+            isGenerating={msgStateRef.current.isGenerating}
+          />
+        );
+      }
+      return <pre {...props}>{children}</pre>;
+    },
+    code: ({ node, className, children, ...props }: any) => {
+      return (
+        <code
+          className={`px-1.5 py-0.5 rounded text-sm font-mono border bg-transparent border-white/20 whitespace-pre-wrap break-words ${className || ""}`}
+          {...props}
+        >
+          {children}
+        </code>
+      );
+    },
+    p: ({ children }: any) => <div className="mb-2 last:mb-0 leading-relaxed text-[15px]">{children}</div>,
+    ul: ({ children }: any) => <ul className="list-disc pl-6 mb-2 space-y-1">{children}</ul>,
+    ol: ({ children }: any) => <ol className="list-decimal pl-6 mb-2 space-y-1">{children}</ol>,
+    li: ({ children }: any) => <li className="leading-relaxed">{children}</li>,
+    a: ({ href, children }: any) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>,
+    strong: ({ children }: any) => <strong className="font-bold">{children}</strong>,
+    em: ({ children }: any) => <em className="italic">{children}</em>,
+    img: ({ src, alt }: any) => {
+      if (!src) return null;
+      return (
+        <img 
+          src={src} 
+          alt={alt || "Imagem"} 
+          className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle my-2 hover:opacity-90 transition-opacity" 
+          referrerPolicy="no-referrer" 
+          onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
+          title="Clique para expandir" 
+        />
+      );
+    },
+  }), [userSettings, onAnalyzeSecurity, onAskAI]);
+
   return (
     <>
       {showSelectText && (
@@ -339,12 +477,17 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 Dev AI
               </span>
             )}
-            {statusNode && (
+            {generationTimerNode && (
               <div className="ml-2 flex items-center">
-                {statusNode}
+                {generationTimerNode}
               </div>
             )}
           </div>
+          {generationStepsNode && (
+            <div className="mb-2 w-full">
+              {generationStepsNode}
+            </div>
+          )}
 
           <div
             className={`relative group transition-all duration-300 w-full break-words ${
@@ -387,58 +530,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   <div className={`bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left select-text markdown-body max-w-full break-words min-w-0 relative ${!isUserTextExpanded && msg.content.length > 500 ? "max-h-64 overflow-hidden" : "overflow-x-auto"}`}>
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
-                      components={{
-                        pre: ({ node, children, ...props }: any) => {
-                          if (React.isValidElement(children)) {
-                            const codeProps = children.props as any;
-                            const match = /language-(\w+)/.exec(codeProps.className || "");
-                            const codeString = String(codeProps.children).replace(/\n$/, "");
-                            const language = match ? match[1] : guessLanguage(codeString);
-                            return (
-                              <CodeBlock
-                                language={language}
-                                code={codeString}
-                                userSettings={userSettings}
-                                fullMessageContent={msg.content}
-                                onAnalyzeSecurity={onAnalyzeSecurity}
-                                onAskAI={onAskAI}
-                                isGenerating={msg.isGenerating}
-                              />
-                            );
-                          }
-                          return <pre {...props}>{children}</pre>;
-                        },
-                        code: ({ node, className, children, ...props }: any) => {
-                          return (
-                            <code
-                              className={`px-1.5 py-0.5 rounded text-sm font-mono border bg-transparent border-white/20 whitespace-pre-wrap break-words ${className || ""}`}
-                              {...props}
-                            >
-                              {children}
-                            </code>
-                          );
-                        },
-                        p: ({ children }) => <div className="mb-2 last:mb-0 leading-relaxed text-[15px]">{children}</div>,
-                        ul: ({ children }) => <ul className="list-disc pl-6 mb-2 space-y-1">{children}</ul>,
-                        ol: ({ children }) => <ol className="list-decimal pl-6 mb-2 space-y-1">{children}</ol>,
-                        li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                        a: ({ href, children }) => <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>,
-                        strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-                        em: ({ children }) => <em className="italic">{children}</em>,
-                        img: ({ src, alt }) => {
-                          if (!src) return null;
-                          return (
-                            <img 
-                              src={src} 
-                              alt={alt || "Imagem"} 
-                              className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle my-2 hover:opacity-90 transition-opacity" 
-                              referrerPolicy="no-referrer" 
-                              onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
-                              title="Clique para expandir" 
-                            />
-                          );
-                        },
-                      }}
+                      components={userMarkdownComponents}
                     >
                       {msg.content}
                     </ReactMarkdown>
@@ -493,85 +585,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                   ) : (
                   <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
-                  components={{
-                    pre: ({ node, children, ...props }: any) => {
-                      if (React.isValidElement(children)) {
-                        const codeProps = children.props as any;
-                        const match = /language-(\w+)/.exec(codeProps.className || "");
-                        const codeString = String(codeProps.children).replace(/\n$/, "");
-                        const language = match ? match[1] : guessLanguage(codeString);
-                        return (
-                          <CodeBlock
-                            language={language}
-                            code={codeString}
-                            userSettings={userSettings}
-                            fullMessageContent={msg.content}
-                            onAnalyzeSecurity={onAnalyzeSecurity}
-                            onAskAI={onAskAI}
-                            isGenerating={msg.isGenerating}
-                          />
-                        );
-                      }
-                      return <pre {...props}>{children}</pre>;
-                    },
-                    code: ({ node, className, children, ...props }: any) => {
-                      return (
-                        <code
-                          className={`px-1.5 py-0.5 rounded text-sm font-mono border whitespace-pre-wrap break-words ${
-                            isUser ? "bg-white/10 border-white/20" : "bg-bg-code border-border-subtle"
-                          } ${className || ""}`}
-                          {...props}
-                        >
-                          {children}
-                        </code>
-                      );
-                    },
-                    p: ({ children }) => <div className="mb-4 last:mb-0 leading-relaxed">{children}</div>,
-                    ul: ({ children }) => <ul className="list-disc pl-6 mb-4 space-y-2">{children}</ul>,
-                    ol: ({ children }) => <ol className="list-decimal pl-6 mb-4 space-y-2">{children}</ol>,
-                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
-                    h1: ({ children }) => <h1 className="text-2xl font-bold mb-4 mt-6 first:mt-0">{children}</h1>,
-                    h2: ({ children }) => <h2 className="text-xl font-bold mb-3 mt-5 first:mt-0">{children}</h2>,
-                    h3: ({ children }) => <h3 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h3>,
-                    table: ({ children }) => <div className="overflow-x-auto w-full mb-4"><table className="min-w-full divide-y divide-border-subtle">{children}</table></div>,
-                    blockquote: ({ children }) => (
-                      <blockquote className={`border-l-4 pl-4 italic my-4 ${isUser ? "border-white/30" : "border-primary/30"}`}>
-                        {children}
-                      </blockquote>
-                    ),
-                    a: ({ href, children }) => {
-                      if (href?.startsWith('blob:') && String(children).includes('VIDEO_BLOB')) {
-                        return <video controls src={href} className="max-w-full rounded-xl border border-border-strong shadow-lg my-4" />;
-                      }
-                      if (href?.startsWith('blob:') && String(children).includes('AUDIO_BLOB')) {
-                        return <audio controls src={href} className="w-full my-4" />;
-                      }
-                      return <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{children}</a>;
-                    },
-                    strong: ({ children }) => <strong className="font-bold">{children}</strong>,
-                    em: ({ children }) => <em className="italic">{children}</em>,
-                    img: ({ src, alt }) => {
-                      if (!src) return null;
-                      const isGeneratedImage = src.startsWith("data:image") || src.startsWith("https://image.pollinations.ai");
-                      return (
-                        <div className="relative group inline-block max-w-full my-4">
-                          <img 
-                            src={src} 
-                            alt={alt || "Imagem"} 
-                            className="max-w-full h-auto cursor-pointer rounded-lg shadow-sm border border-border-subtle group-hover:opacity-90 transition-opacity" 
-                            referrerPolicy="no-referrer" 
-                            onClick={() => setPreviewFile({ dataUrl: src, mimeType: 'image/png' })} 
-                            title="Clique para expandir" 
-                          />
-                          {isGeneratedImage && (
-                            <div className="absolute bottom-2 right-2 w-6 h-6 opacity-30 hover:opacity-100 transition-opacity select-none drop-shadow-md flex items-center justify-center p-1 rounded-full bg-black/40 backdrop-blur-md pointer-events-none">
-                             <AILogo mode={userSettings?.mode} className="w-full h-full" />
-                           </div>
-                          )}
-                        </div>
-                      );
-                    },
-                  }}
+                  components={aiMarkdownComponents}
                 >
                   {mainContent}
                 </ReactMarkdown>

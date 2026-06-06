@@ -54,6 +54,7 @@ import {
   ArrowDown,
   Paperclip,
   Mic,
+  Loader2,
   MicOff,
   Camera,
   File as FileIcon,
@@ -114,11 +115,8 @@ const lazyWithRetry = (componentImport: () => Promise<any>) =>
 const SettingsModal = lazyWithRetry(() => import("./components/SettingsModal").then(module => ({ default: module.SettingsModal })));
 const ShareModal = lazyWithRetry(() => import("./components/ShareModal").then(module => ({ default: module.ShareModal })));
 const PasteModal = lazyWithRetry(() => import("./components/PasteModal").then(module => ({ default: module.PasteModal })));
-const FullscreenEditor = lazyWithRetry(() => import("./components/FullscreenEditor").then(module => ({ default: module.FullscreenEditor })));
-const CanvasWorkspace = lazyWithRetry(() => import("./components/CanvasWorkspace").then(module => ({ default: module.CanvasWorkspace })));
-const MiniDev = lazyWithRetry(() => import("./components/MiniDev").then(module => ({ default: module.MiniDev })));
-const CinemaModal = lazyWithRetry(() => import("./components/CinemaModal").then(module => ({ default: module.CinemaModal })));
 
+const MiniDev = lazyWithRetry(() => import("./components/MiniDev").then(module => ({ default: module.MiniDev })));
 import { cn, copyToClipboard } from "./lib/utils";
 import { processLargeFile, saveFileToDB, getFileFromDB, deleteFileFromDB } from "./lib/fileStorage";
 
@@ -381,10 +379,74 @@ const GenerationTimer = ({ statusMessage, startTime }: { statusMessage: string |
     return () => clearInterval(interval);
   }, [startTime]);
   return (
-    <span className="text-sm font-medium text-text-muted italic">
-      {statusMessage || "Escrevendo..."} {(elapsed / 1000).toFixed(1)}s
+    <span className="text-[10px] font-bold font-mono tracking-widest text-text-muted/80 bg-bg-surface-hover px-2 py-0.5 rounded-full inline-flex items-center">
+      {statusMessage && <span className="mr-2">{statusMessage}</span>}
+      <span className="w-2 h-2 rounded-full bg-primary/80 animate-pulse mr-2"></span>
+      {(elapsed / 1000).toFixed(1)}s
     </span>
   );
+};
+
+let cachedAudioCtx: AudioContext | null = null;
+const initAudioCtx = () => {
+  if (!cachedAudioCtx) {
+    try {
+      const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+      if (Ctx) cachedAudioCtx = new Ctx();
+    } catch (e) {}
+  }
+  // Resume if suspended
+  if (cachedAudioCtx && cachedAudioCtx.state === 'suspended') {
+    cachedAudioCtx.resume().catch(() => {});
+  }
+  return cachedAudioCtx;
+};
+
+export const playCompletionSound = () => {
+  try {
+    const audio = new window.Audio('/pronto.mp3');
+    audio.play().catch(() => {});
+  } catch (err) {}
+  if (navigator.vibrate) {
+    navigator.vibrate([30, 50, 40]);
+  }
+};
+
+export const playOpeningSound = () => {
+  try {
+    const audio = new window.Audio('/abertura.mp3');
+    audio.play().catch(() => {});
+  } catch (err) {}
+};
+
+export const playQuotaExceededSound = () => {
+  const random = Math.floor(Math.random() * 5) + 1;
+  try {
+    const audio = new window.Audio(`/som${random}.mp3`);
+    audio.play().catch(() => {});
+  } catch (err) {}
+};
+
+export const playTypingTick = () => {
+  const ctx = initAudioCtx();
+  if (ctx) {
+    try {
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(600 + Math.random() * 300, ctx.currentTime);
+      gainNode.gain.setValueAtTime(0.015, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
+      osc.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.05);
+    } catch (err) {}
+  }
+  if (navigator.vibrate) {
+    // Very subtle vibration for typing
+    navigator.vibrate(2); 
+  }
 };
 
 export default function App() {
@@ -416,7 +478,8 @@ export default function App() {
     wakeWordEnabled: false,
     googleSearchEnabled: true,
     typingEffect: true,
-    typingSound: true
+    typingSound: true,
+    autoApplyCode: false
   });
   const [onlineUsersCount, setOnlineUsersCount] = useState(1);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -731,15 +794,43 @@ export default function App() {
     };
   }, [userSettings.wakeWordEnabled]);
   const [currentUserRole, setCurrentUserRole] = useState<string>("owner");
-  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [_statusMessage, _setStatusMessage] = useState<string | null>(null);
+  const [generationSteps, setGenerationSteps] = useState<{ id: string, label: string, status: "running" | "success" | "error" }[]>([]);
+
+  const setStatusMessage = useCallback((msg: string | null) => {
+    _setStatusMessage(msg);
+    if (msg === null) {
+      setGenerationSteps(prev => {
+        const arr = [...prev];
+        if (arr.length > 0 && arr[arr.length - 1].status === 'running') {
+          arr[arr.length - 1].status = 'success';
+        }
+        return arr;
+      });
+    } else {
+      setGenerationSteps(prev => {
+        const arr = [...prev];
+        if (arr.length > 0 && arr[arr.length - 1].status === 'running') {
+          arr[arr.length - 1].status = 'success';
+        }
+        if (arr.length > 0 && arr[arr.length - 1].label === msg) {
+           arr[arr.length - 1].status = 'running';
+           return arr;
+        }
+        arr.push({ id: Math.random().toString(), label: msg, status: 'running' });
+        return arr;
+      });
+    }
+  }, []);
+
+  const statusMessage = _statusMessage;
   const abortControllerRef = useRef<AbortController | null>(null);
   const lastLocalStopTimestampRef = useRef<number>(0);
   const activeModelMessageIdRef = useRef<string | null>(null);
 
   const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
-  const [isWorkspaceOpen, setIsWorkspaceOpen] = useState(false);
-  const [isCinemaModeOpen, setIsCinemaModeOpen] = useState(false);
+
   const attachmentMenuRef = useRef<HTMLDivElement>(null);
 
   useClickOutside(attachmentMenuRef, () => {
@@ -917,6 +1008,7 @@ export default function App() {
   }, [quotaResetTime]);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
 
   const [showScrollButton, setShowScrollButton] = useState(false);
   const [logs, setLogs] = useState<{ type: string; msg: string; time: Date }[]>([]);
@@ -1053,7 +1145,8 @@ export default function App() {
               wakeWordEnabled: data.wakeWordEnabled || false,
               googleSearchEnabled: data.googleSearchEnabled !== false,
               typingEffect: data.typingEffect !== false,
-              typingSound: data.typingSound !== false
+              typingSound: data.typingSound !== false,
+              autoApplyCode: data.autoApplyCode === true || false
             });
           } else {
             const userData: any = {
@@ -1119,7 +1212,7 @@ export default function App() {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
       }
-      setIsAuthReady(true);
+      setTimeout(() => setIsAuthReady(true), 1500);
     });
     return () => unsubscribe();
   }, []);
@@ -1250,7 +1343,7 @@ export default function App() {
             } else {
                setIsGenerating(data.isGenerating);
                if (data.isGenerating) {
-                 setStatusMessage("Pensando...");
+                 setStatusMessage("Pensando");
                } else {
                  setStatusMessage(null);
                }
@@ -1459,27 +1552,23 @@ Aja como um participante ativo, inteligente e carismático dessa roda de convers
 
     const artifactsInstruction = `
 SISTEMA DE ARTEFATOS E CRIAÇÃO DE JOGOS:
-Você é infinitamente superior a plataformas genéricas. Você tem recursos monstruosos.
-Sempre utilize as versões mais recentes das linguagens e bibliotecas (ex: Javascript moderno, Three.js atualizado). E deve otimizar sempre as versões mais atuais de todas as linguagens de programação existentes. Nunca faça sistemas defasados.
-A menos que o usuário EXPLICITAMENTE peça um jogo 8-bit, retrô, pixelado ou feito com blocos/quadrados, VOCÊ NUNCA DEVE CRIAR gráficos assim. Tudo deve ser modelado detalhadamente e bem bonito (ex: meshes trabalhadas, shaders complexos, iluminação), NÃO faça apenas triângulos, quadrados, círculos, cones ou cilindros feios, primitivos ou de cores chapadas.
-Sempre que criar um JOGO 2D, simule trilhas sonoras e imagens. 
-Se o usuário solicitar um JOGO (qualquer tipo) com "gráficos 4k" ou realista, VOCÊ DEVE OBRIGATORIAMENTE gerar um jogo extremamente lindo, realista, sem gráficos borrados ou blocos quadrados de 1980. VOCÊ DEVE modelar tudo muito bonito (usando Three.js, PBR materiais, texturas de alta resolução procedurais), e criar uma FÍSICA MAGNÍFICA (usando Ammo.js, Cannon.js ou física própria absurda). 
-Se a bosta da API cortar a resposta, VOCÊ VAI CONTINUAR AUTOMATICAMENTE. O sistema frontend já fará o auto-continue, portanto saiba exatamente o que estava fazendo e onde parou dentro do bloco de código. Apenas coloque a continuação exata do código de onde parou.
+Você possui recursos avançados de criação.
+Sempre utilize as versões mais recentes das linguagens e bibliotecas (ex: Javascript moderno, Three.js atualizado).
+A menos que o usuário explicitamente peça um jogo 8-bit ou retrô, procure criar gráficos detalhados e bem polidos, modelando com materiais e shaders de qualidade e utilizando motores físicos adequados (Ammo.js, Cannon.js).
+Sempre que criar um jogo, procure adicionar trilhas sonoras e imagens geradas.
+Se a API cortar a resposta por limite de tokens, você será chamado para continuar automaticamente. O sistema frontend já fará o auto-continue, portanto saiba exatamente o que estava fazendo e de onde continuar no código.
 
 EDIÇÃO CIRÚRGICA DE CÓDIGO E MANUSEIO DE ARQUIVOS GIGANTES:
-Sempre que o usuário enviar um script gigantesco ou código pesado (ex: 11.000 ou 12.000 linhas) em anexo ou texto:
-1. LEITURA EXATA: Leia TODO o conteúdo minuciosamente, linha por linha. NUNCA resuma falando uma contagem mentirosa ou genérica tipo "este arquivo tem 3.000 linhas". Saiba exatamente o que há no arquivo (todo o escopo) e o número real de linhas.
-2. EDIÇÃO MODULAR (SOMENTE O QUE FOI PEDIDO): Se o usuário pedir para editar, modificar, verificar ou remover apenas UMA PARTE, FUNÇÃO ou TRECHO desse arquivo imenso, VOCÊ NUNCA DEVE REESCREVER O SCRIPT INTEIRO NO BLOCO DE CÓDIGO! 
-3. CORTAR E COLAR ALVO: Você deve simplesmente "cortar" (isolar) essa função/parte específica exigida pelo usuário, "colar" em um novo bloco de código na sua resposta e fazer APENAS as edições que ele pediu de forma cirúrgica. Assim o usuário terá apenas o trecho pronto para ser substituído na máquina dele e poupará 99% de tempo de resposta da AI!
-4. FERRAMENTA EDITCODEBLOCK: Continue usando a ferramenta editCodeBlock caso o usuário queira consertar uma fala/código ANTERIOR que VOCÊ MESMO PROJETOU NO SEU BLOCO DE CÓDIGO (usando a ferramenta para achar o trecho e fazer o replace instantâneo). Pela ferramenta do editCodeBlock, o replace é imediato!
-
-CORREÇÃO DE BUGS E ERROS EM JOGOS/CÓDIGOS:
-Os jogos e códigos que você cria devem funcionar perfeitamente na primeira tentativa.
-Se o usuário afirmar que o código ou jogo tem bugs e não está funcionando:
-1. Você deve analisar a fundo qual é o motivo do erro.
-2. VOCÊ DEVE consertar o erro usando EXCLUSIVAMENTE a ferramenta \`editCodeBlock\`. NUNCA gere o código inteiro de novo para consertar um bug, pois leva muitos minutos. Basta substituir o trecho defeituoso chamando a ferramenta.
-3. Certifique-se de que o \`targetContent\` passado na ferramenta contém exatamente a string do trecho original para que funcione perfeitamente.
-
+Sempre que o usuário enviar um script gigantesco ou código extenso:
+1. LEITURA EXATA: Leia o conteúdo minuciosamente.
+2. EDIÇÃO MODULAR: Se o usuário pedir para editar apenas uma parte ou função, NUNCA reescreva o script inteiro.
+3. CORTAR E COLAR ALVO: Isole a função/parte específica exigida, e forneça apenas as edições pontuais que foram pedidas de forma cirúrgica.
+${userSettings.autoApplyCode !== false ? `4. FERRAMENTA EDITCODEBLOCK: A ferramenta editCodeBlock foi projetada para refatorar e aplicar correções. Ela permite modificar o código existente sem reescrevê-lo completamente. Utilize-a ativamente para edições rápidas!
+CORREÇÃO DE BUGS E ERROS:
+Seus códigos devem priorizar o funcionamento perfeito. Caso haja bugs:
+1. Analise a fundo o motivo do erro antes de resolver.
+2. Conserte o erro usando EXCLUSIVAMENTE a ferramenta \`editCodeBlock\`. Evite gerar o código completo novamente para economizar espaço e tempo.
+3. O \`targetContent\` passado na ferramenta deve conter exatamente a string original, incluindo espaços, para que o regex do frontend o encontre.` : `4. ATENÇÃO: O usuário DESATIVOU O AUTO-APPLY CODE. Você NÃO PODE usar a ferramenta editCodeBlock. Não envie códigos inteiros caso o usuário solicite uma pequena correção. Forneça apenas as alterações.`}
 RESPOSTAS RICAS EM MÍDIA (IMAGENS, ÁUDIO, LINKS):
 Você não é limitado apenas a texto! Você DEVE usar MÍDIA RICA sempre que enriquecer a conversa:
 1. Imagens: Use a ferramenta \`generateImage\` se o usuário quiser que você crie/desenhe uma imagem ou artefato novo.
@@ -1644,9 +1733,9 @@ ${artifactsInstruction}`;
     setAudioLevel(0);
   };
 
-  const startAudioVisualizer = async () => {
+  const startAudioVisualizer = async (providedStream?: MediaStream) => {
     try {
-      let stream = audioStreamRef.current;
+      let stream = providedStream || audioStreamRef.current;
       if (!stream) {
         stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         audioStreamRef.current = stream;
@@ -1679,96 +1768,93 @@ ${artifactsInstruction}`;
 
   const handleListen = async () => {
     if (isListening) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        mediaRecorderRef.current.stop();
       }
       setIsListening(false);
       isListeningActiveRef.current = false;
       stopAudioVisualizer();
-      
-      return;
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setErrorMessage("Seu navegador não suporta reconhecimento de voz nativo.");
       return;
     }
 
     try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'pt-BR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-
-      recognition.onstart = () => {
-        setIsListening(true);
-        isListeningActiveRef.current = true;
-        lastProcessedResultIndexRef.current = 0;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      startAudioVisualizer(stream);
+      
+      const options = typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm') 
+         ? { mimeType: 'audio/webm' } 
+         : undefined;
+         
+      const recorder = new MediaRecorder(stream, options);
+      audioChunksRef.current = [];
+      
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
       };
-
-      recognition.onresult = (event: any) => {
-        let finalTrans = "";
-        let intermTrans = "";
-        const startIndex = Math.max(event.resultIndex, lastProcessedResultIndexRef.current);
+      
+      recorder.onstop = async () => {
+        setIsTranscribing(true);
+        const audioBlob = new Blob(audioChunksRef.current, { type: options?.mimeType || 'audio/mp4' });
+        stream.getTracks().forEach(t => t.stop());
         
-        for (let i = startIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            finalTrans += event.results[i][0].transcript;
-            lastProcessedResultIndexRef.current = i + 1;
-          } else {
-            intermTrans += event.results[i][0].transcript;
-          }
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = async () => {
+            try {
+              const dataUrl = reader.result as string;
+              const match = dataUrl.match(/^data:(.*);base64,(.*)$/);
+              if (match) {
+                // Remove codec info for Gemini API compatibility, it generally prefers standard MIME types.
+                let mimeType = match[1] || 'audio/webm';
+                if (mimeType.includes(';')) mimeType = mimeType.split(';')[0];
+                
+                const base64data = match[2];
+                
+                const ai = getAI();
+                const response = await ai.models.generateContent({
+                  model: "gemini-3-flash-preview",
+                  contents: [
+                    {
+                      role: "user",
+                      parts: [
+                         { text: "Você é o melhor e mais preciso transcritor do mundo. Transcreva este áudio perfeitamente para texto no idioma falado (geralmente Português). Adicione pontuação adequada (vírgulas, pontos finais, interrogações) e corrija todas as maiúsculas para que a escrita fique extremamente organizada e bonita. O usuário ama escrita impecável. DEVOLVA APENAS A TRANSCRIÇÃO EXATA, SEM NENHUM COMENTÁRIO OU TEXTO ADICIONAL." },
+                         {
+                           inlineData: {
+                             data: base64data,
+                             mimeType: mimeType
+                           }
+                         }
+                      ]
+                    }
+                  ]
+                });
+                
+                if (response.text?.trim()) {
+                  setInput(prev => prev.trim() ? prev.trim() + " " + response.text!.trim() : response.text!.trim());
+                }
+              }
+            } catch (innerErr) {
+              console.error("Transcription error inside onloadend:", innerErr);
+              toast.error("Erro ao transcrever áudio com Gemini.");
+            } finally {
+              setIsTranscribing(false);
+            }
+          };
+        } catch (e) {
+          console.error("Transcription error:", e);
+          toast.error("Erro ao processar áudio.");
+          setIsTranscribing(false);
         }
-
-        if (finalTrans) {
-          setInput(prev => prev.trim() ? `${prev.trim()} ${finalTrans} ` : `${finalTrans} `);
-        }
-        setInterimTranscript(intermTrans);
       };
-
-      recognition.onerror = (event: any) => {
-        console.warn("Speech recognition error:", event.error);
-        if (event.error !== 'no-speech' && event.error !== 'aborted') {
-          setIsListening(false);
-          isListeningActiveRef.current = false;
-          stopAudioVisualizer();
-          setInterimTranscript("");
-        }
-      };
-
-      recognition.onend = () => {
-        if (isListeningActiveRef.current) {
-          // Restart recognition if user didn't manually stop it
-          try {
-            recognition.start();
-          } catch (e) {
-             console.warn("Failed to restart speech recognition", e);
-             setIsListening(false);
-             isListeningActiveRef.current = false;
-             stopAudioVisualizer();
-             if (interimTranscript) {
-               setInput(prev => prev.trim() ? `${prev.trim()} ${interimTranscript} ` : `${interimTranscript} `);
-             }
-             setInterimTranscript("");
-          }
-        } else {
-          setIsListening(false);
-          stopAudioVisualizer();
-          if (interimTranscript) {
-            setInput(prev => prev.trim() ? `${prev.trim()} ${interimTranscript} ` : `${interimTranscript} `);
-          }
-          setInterimTranscript("");
-        }
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (error) {
-      console.error("Transcription error:", error);
-      setIsListening(false);
-      stopAudioVisualizer();
-      setInterimTranscript("");
+      
+      recorder.start();
+      setIsListening(true);
+      isListeningActiveRef.current = true;
+      mediaRecorderRef.current = recorder;
+    } catch (e) {
+      console.error("Microphone access error:", e);
+      toast.error("Erro ao acessar microfone. Verifique as permissões do navegador.");
     }
   };
 
@@ -2026,7 +2112,7 @@ ${artifactsInstruction}`;
           const attachmentsData = currentAttachments.map((a) => ({
             dataUrl: a.dataUrl,
             mimeType: a.mimeType,
-            meta: a.meta || null
+            meta: (a as any).meta || null
           }));
 
           // Update the edited message
@@ -2136,7 +2222,7 @@ ${artifactsInstruction}`;
       const attachmentsData = currentAttachments.map((a) => ({
         dataUrl: a.dataUrl,
         mimeType: a.mimeType,
-        meta: a.meta || null
+        meta: (a as any).meta || null
       }));
       try {
         const userMsgRef = doc(messagesRef);
@@ -2275,6 +2361,7 @@ ${artifactsInstruction}`;
     const msgId = msg.id;
 
     setIsLoading(true);
+    setGenerationSteps([]);
     setIsGenerating(true);
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
@@ -2536,8 +2623,9 @@ ${artifactsInstruction}`;
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
 
+    setGenerationSteps([]);
     setIsGenerating(true);
-    setStatusMessage("Pensando...");
+    setStatusMessage("Pensando");
     
     const activeOwnerId = currentChatOwnerId || user.uid;
 
@@ -2725,27 +2813,14 @@ ${artifactsInstruction}`;
       };
 
       const playCinemaVideoTool = {
-        name: "playCinemaVideo",
-        description: "Reproduz um filme, série ou vídeo diretamente no player do Modo Cinema. Use isso quando o usuário estiver buscando um filme ou vídeo, passando um link m3u8, mp4 ou de youtube.",
-        parameters: {
-          type: GenAIType.OBJECT,
-          properties: {
-            url: {
-              type: GenAIType.STRING,
-              description: "A URL completa e direta do vídeo (m3u8, mp4).",
-            },
-            title: {
-              type: GenAIType.STRING,
-              description: "O título do vídeo sendo reproduzido.",
-            }
-          },
-          required: ["url"],
-        },
+        name: "OBSOLETE",
+        description: "OBSOLETE",
+        parameters: { type: GenAIType.OBJECT, properties: { param: { type: GenAIType.STRING } } }
       };
 
       const editCodeBlockTool = {
         name: "editCodeBlock",
-        description: "Altera instantaneamente o último código gerado. Use SEMPRE que precisar consertar um bug, adicionar uma feature pequena, ou alterar uma parte do código sem reescrever o arquivo inteiro. Em vez de demorar minutos gerando tudo de novo, use isso para alterar o código cirurgicamente e instantaneamente.",
+        description: "Encontra e substitui instantaneamente um trecho de código ou texto em qualquer lugar das mensagens recentes, anexos, arquivos lidos ou códigos gerados. Use SEMPRE que precisar consertar um bug, adicionar uma feature pequena, ou alterar uma parte de qualquer arquivo/código sem precisar reescrevê-lo inteiro. Funciona para TODOS os arquivos lidos e arquivos gigantes que você quer extrair partes para consertar.",
         parameters: {
           type: GenAIType.OBJECT,
           properties: {
@@ -2765,6 +2840,11 @@ ${artifactsInstruction}`;
           required: ["targetContent", "replacementContent", "message"],
         },
       };
+
+      const customToolsList = [generateImageTool, updateMemoryTool, generateGameTool, generateVideoTool, generateMusicTool, generateSliderTool, playCinemaVideoTool];
+      if (userSettings.autoApplyCode !== false) {
+         customToolsList.push(editCodeBlockTool);
+      }
 
       let currentModel = "gemini-3-flash-preview"; // Default to flash
       if (userSettings.mode === "Thinking") {
@@ -2798,7 +2878,7 @@ ${artifactsInstruction}`;
               ],
               systemInstruction: getSystemPrompt() + ragContextText,
               tools: [
-                { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool, generateVideoTool, generateMusicTool, generateSliderTool, playCinemaVideoTool, editCodeBlockTool] },
+                { functionDeclarations: customToolsList },
                 ...(userSettings.googleSearchEnabled ? [{ googleSearch: {} }] : []),
               ],
               toolConfig: userSettings.googleSearchEnabled ? { functionCallingConfig: { mode: "AUTO" } as any, includeServerSideToolInvocations: true, include_server_side_tool_invocations: true } as any : undefined,
@@ -2826,7 +2906,7 @@ ${artifactsInstruction}`;
           }
         }
 
-        setStatusMessage("Escrevendo...");
+        setStatusMessage("Gerando resposta");
 
         let isThinking = false;
         let currentThinkContent = "";
@@ -2848,6 +2928,7 @@ ${artifactsInstruction}`;
             if (now - lastStateUpdateTime > 150) {
                 lastStateUpdateTime = now;
                 setLiveStreamText(aiResponseText);
+                if (userSettings.typingSound) playTypingTick();
             }
             
             // Extract think content
@@ -2940,6 +3021,7 @@ ${artifactsInstruction}`;
             let imgErrorMessage = `Erro ao gerar imagem: ${errorString}`;
             if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
               setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
+              playQuotaExceededSound();
               if (window.aistudio) {
                 try { await window.aistudio.openSelectKey(); } catch(e) {}
               }
@@ -2952,37 +3034,50 @@ ${artifactsInstruction}`;
           const replacementContent = call.args.replacementContent as string;
           const message = call.args.message as string;
 
-          setStatusMessage("Aplicando edição cirúrgica...");
+          setStatusMessage("Escrevendo código");
           
-          let lastCode = "";
+          let newCode: string | null = null;
           let lastCodeLanguage = "typescript";
           
+          let potentialSources: { code: string, lang: string }[] = [];
           for (let i = messages.length - 1; i >= 0; i--) {
             const msg = messages[i];
-            if (msg.role === "model" && msg.content) {
+            
+            if (msg.attachments && msg.attachments.length > 0) {
+              for (let j = msg.attachments.length - 1; j >= 0; j--) {
+                const att = msg.attachments[j];
+                if (att.mimeType === "text/code" && att.meta?.id) {
+                  const textContent = await getFileFromDB(att.meta.id);
+                  if (textContent) {
+                    const matchName = att.meta.name.match(/\.(\w+)$/);
+                    potentialSources.push({ code: textContent, lang: matchName ? matchName[1] : "typescript" });
+                  }
+                }
+              }
+            }
+            
+            if (msg.content && typeof msg.content === "string") {
               const regex = /```(\w*)\n([\s\S]*?)```/g;
               let match;
               let blocks = [];
               while ((match = regex.exec(msg.content)) !== null) {
                 blocks.push({ language: match[1], code: match[2] });
               }
-              if (blocks.length > 0) {
-                lastCode = blocks[blocks.length - 1].code;
-                lastCodeLanguage = blocks[blocks.length - 1].language || "";
-                break;
+              for (let k = blocks.length - 1; k >= 0; k--) {
+                potentialSources.push({ language: blocks[k].language || "", code: blocks[k].code });
               }
+              
+              potentialSources.push({ language: "markdown", code: msg.content });
             }
           }
 
-          if (!lastCode) {
-            aiResponseText = "Erro: Não encontrei nenhum bloco de código anterior para editar. Você deve gerar um código completo antes de tentar edita-lo em partes.";
-          } else {
-            let newCode = null;
-            if (lastCode.includes(targetContent)) {
-              newCode = lastCode.replace(targetContent, replacementContent);
+          for (let source of potentialSources) {
+            if (source.code.includes(targetContent)) {
+              newCode = source.code.replace(targetContent, replacementContent);
+              lastCodeLanguage = source.lang || source.language || "typescript";
+              break;
             } else {
-              // Fuzzy replace line-by-line ignoring leading/trailing whitespaces
-              const origLines = lastCode.split("\n");
+              const origLines = source.code.split("\n");
               const targetLines = targetContent.split("\n").map(l => l.trim()).filter(l => l !== "");
               const replLines = replacementContent.split("\n");
               
@@ -2995,7 +3090,6 @@ ${artifactsInstruction}`;
                   let k = 0;
                   let origPointer = 0;
                   
-                  // Need a better matching that allows target to skip empty lines in original
                   while(k < targetLines.length && i + origPointer < origLines.length) {
                     const origTrimmed = origLines[i + origPointer].trim();
                     if (origTrimmed === "") {
@@ -3020,15 +3114,17 @@ ${artifactsInstruction}`;
                 if (matchIndex !== -1) {
                    origLines.splice(matchIndex, matchLength, ...replLines);
                    newCode = origLines.join("\n");
+                   lastCodeLanguage = source.lang || source.language || "typescript";
+                   break;
                 }
               }
             }
-            
-            if (newCode !== null) {
-              aiResponseText = `${message || '*Código editado com sucesso*'}\n\n\`\`\`${lastCodeLanguage}\n${newCode}\n\`\`\`\n`;
-            } else {
-              aiResponseText = `Erro: O trecho exato a ser substituído não foi encontrado no último código gerado. Tente ser mais genérico na sua substituição.`;
-            }
+          }
+          
+          if (newCode !== null) {
+            aiResponseText = `${message || '*Código editado com sucesso*'}\n\n\`\`\`${lastCodeLanguage}\n${newCode}\n\`\`\`\n`;
+          } else {
+            aiResponseText = `Erro: O trecho a ser substituído não foi encontrado em nenhuma mensagem ou arquivo recente. Tente ser mais abrangente ou verifique a formatação do "targetContent".`;
           }
         } else if (call.name === "updateMemory") {
           const newMemory = call.args.memory as string;
@@ -3052,7 +3148,7 @@ ${artifactsInstruction}`;
               ],
               systemInstruction: getSystemPrompt() + ragContextText,
               tools: [
-                { functionDeclarations: [generateImageTool, updateMemoryTool, generateGameTool, generateVideoTool, generateMusicTool, generateSliderTool, playCinemaVideoTool, editCodeBlockTool] },
+                { functionDeclarations: customToolsList },
                 ...(userSettings.googleSearchEnabled ? [{ googleSearch: {} }] : []),
               ],
               toolConfig: userSettings.googleSearchEnabled ? { functionCallingConfig: { mode: "AUTO" } as any, includeServerSideToolInvocations: true, include_server_side_tool_invocations: true } as any : undefined,
@@ -3070,6 +3166,7 @@ ${artifactsInstruction}`;
               if (now - lastContinueStateUpdateTime > 150) {
                   lastContinueStateUpdateTime = now;
                   setLiveStreamText(aiResponseText);
+                  if (userSettings.typingSound) playTypingTick();
               }
               
               const thinkStart = aiResponseText.indexOf("<think>");
@@ -3247,15 +3344,6 @@ ${artifactsInstruction}`;
             console.error("Slider Generation Error:", sliderErr);
             aiResponseText = `Erro ao gerar o slider: ${sliderErr.message || String(sliderErr)}`;
           }
-        } else if (call.name === "playCinemaVideo") {
-          const url = call.args.url as string;
-          const title = call.args.title as string || "Vídeo Encontrado";
-          
-          setStatusMessage(`Reproduzindo ${title}...`);
-          window.dispatchEvent(new CustomEvent('openCinemaPlayer', { detail: { url } }));
-          setIsCinemaModeOpen(true);
-          
-          aiResponseText = `▶️ **Reproduzindo agora:** ${title}\n[Link direto do vídeo](${url})\nO player foi iniciado automaticamente no Modo Cinema para você!`;
         } else if (call.name === "generateGame") {
           const gamePrompt = call.args.prompt as string;
           setStatusMessage(`Gerando jogo: "${gamePrompt}"...`);
@@ -3306,6 +3394,7 @@ ${artifactsInstruction}`;
             let gameErrorMessage = `Erro ao gerar o jogo: ${errorString}`;
             if (errorString.includes("RESOURCE_EXHAUSTED") || errorString.includes("429")) {
               setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
+              playQuotaExceededSound();
               if (window.aistudio) {
                 try { await window.aistudio.openSelectKey(); } catch(e) {}
               }
@@ -3455,6 +3544,9 @@ ${artifactsInstruction}`;
       setStreamingThinkContent(null);
       setStatusMessage(null);
       setLiveStreamText(null);
+      if (aiResponseText) {
+         playCompletionSound();
+      }
       if (resolveTypingRef.current) {
          resolveTypingRef.current();
          resolveTypingRef.current = null;
@@ -3463,6 +3555,7 @@ ${artifactsInstruction}`;
       if (isQuotaError) {
         setQuotaResetTime(Date.now() + 60000); 
         setErrorMessage("Você excedeu a cota da API. Por favor, aguarde ou configure sua própria chave API nas configurações para continuar usando sem interrupções.");
+        playQuotaExceededSound();
         if (window.aistudio) {
           try { await window.aistudio.openSelectKey(); } catch(e) {}
         }
@@ -3605,40 +3698,111 @@ ${artifactsInstruction}`;
   const isCodeMode = userSettings.mode === "Thinking";
   const isNanoBanana = userSettings.mode === "Nano Banana 2";
 
-  if (!isAuthReady) {
+  const [showLoadingState, setShowLoadingState] = useState(true);
+  const [userInteracted, setUserInteracted] = useState(false);
+
+  useEffect(() => {
+    if (isAuthReady && userInteracted) {
+      playOpeningSound();
+      setShowLoadingState(false);
+    }
+  }, [isAuthReady, userInteracted]);
+
+  if (showLoadingState) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center bg-bg-main text-text-primary relative overflow-hidden">
-        {/* Background glow */}
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px]" />
-        
-        <div className="relative z-10 flex flex-col items-center">
-          <div className="w-24 h-24 rounded-3xl flex items-center justify-center mb-8 shadow-2xl bg-bg-surface border border-border-strong overflow-hidden animate-pulse">
-            <AILogo mode={userSettings.mode} />
-          </div>
-          
-          <h1 className="text-4xl font-black text-center mb-3 tracking-tight bg-gradient-to-r from-primary to-purple-500 bg-clip-text text-transparent">
-            Dev AI
-          </h1>
-          
-          <div className="flex items-center gap-2 mt-8">
-            <div
-              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-              style={{ animationDelay: "0ms" }}
-            />
-            <div
-              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-              style={{ animationDelay: "150ms" }}
-            />
-            <div
-              className="w-2.5 h-2.5 bg-primary rounded-full animate-bounce"
-              style={{ animationDelay: "300ms" }}
-            />
-          </div>
-          <div className="mt-6 text-sm text-text-muted font-medium tracking-widest uppercase">
-            Iniciando Sistema
-          </div>
-        </div>
-      </div>
+      <AnimatePresence>
+          <motion.div 
+            className="fixed inset-0 z-[99999] flex flex-col items-center justify-center bg-[#050505] text-white overflow-hidden"
+            exit={{ opacity: 0, filter: "blur(20px)", scale: 1.2 }}
+            transition={{ duration: 0.8, ease: "easeInOut" }}
+          >
+            <motion.div 
+              className="absolute inset-0 -z-10 flex items-center justify-center overflow-hidden pointer-events-none"
+              initial={{ opacity: 0, scale: 0.5 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 2, ease: "easeOut" }}
+            >
+              <div 
+                className="absolute inset-0 bg-black"
+              />
+              <motion.div 
+                animate={{ rotate: 360 }}
+                transition={{ repeat: Infinity, duration: 15, ease: "linear" }}
+                className="w-full max-w-[800px] aspect-square rounded-full bg-[conic-gradient(from_0deg,transparent,rgba(255,255,255,0.8),transparent)] opacity-20 blur-[15px]" 
+              />
+            </motion.div>
+
+              <div className="relative z-10 flex flex-col items-center justify-center pb-12">
+                <div className="flex items-center justify-center gap-8 mb-12">
+                  <motion.div
+                    initial={{ scale: 0, rotate: -90, filter: "blur(10px)" }}
+                    animate={{ scale: 1, rotate: 0, filter: "blur(0px)" }}
+                    transition={{ type: "spring", stiffness: 100, damping: 15 }}
+                    className="w-32 h-32 flex items-center justify-center bg-black/40 rounded-[2.5rem] backdrop-blur-xl border border-white/10 shadow-[0_0_40px_rgba(255,255,255,0.05)] overflow-hidden"
+                  >
+                    <img
+                      src="https://instasize.com/api/image/2a217bcf9136b2b83a24523dca3e8226b1e4e7b9af9dd3cbbe6250d741431848.png"
+                      alt="Dev AI Logo"
+                      className="w-full h-full object-cover"
+                    />
+                  </motion.div>
+                  
+                  <div className="flex flex-col items-start gap-1">
+                    <motion.h1 
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.2, duration: 0.7, type: "spring" }}
+                      className="text-6xl font-black tracking-tighter bg-gradient-to-b from-white via-gray-200 to-gray-500 bg-clip-text text-transparent"
+                    >
+                      Dev AI
+                    </motion.h1>
+
+                    <motion.p
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.4, duration: 0.5 }}
+                      className="text-sm font-medium tracking-[0.2em] text-[#a1a1aa] uppercase"
+                    >
+                      Advanced Intelligence
+                    </motion.p>
+                  </div>
+                </div>
+
+                {isAuthReady ? (
+                  <motion.button 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => setUserInteracted(true)}
+                    className="px-8 py-4 bg-white text-black font-black text-xl rounded-2xl shadow-[0_0_40px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_rgba(255,255,255,0.5)] transition-all"
+                  >
+                    INICIAR DEV AI
+                  </motion.button>
+                ) : (
+                  <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    className="flex flex-col items-center gap-4"
+                  >
+                    <div className="flex gap-1.5">
+                      {[...Array(3)].map((_, i) => (
+                        <motion.div
+                          key={i}
+                          className="w-2.5 h-2.5 bg-white/80 rounded-full"
+                          animate={{ scale: [1, 1.5, 1], opacity: [0.3, 1, 0.3] }}
+                          transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-white/50 text-sm font-medium uppercase tracking-widest animate-pulse">
+                      Iniciando Sistemas Neurais...
+                    </span>
+                  </motion.div>
+                )}
+              </div>
+          </motion.div>
+      </AnimatePresence>
     );
   }
 
@@ -3699,21 +3863,6 @@ ${artifactsInstruction}`;
 
   return (
     <div className="flex h-[100dvh] w-full max-w-[100vw] bg-bg-main text-text-primary font-sans overflow-hidden">
-      <AnimatePresence>
-        {isCinemaModeOpen && (
-          <Suspense fallback={null}>
-            <CinemaModal
-              onClose={() => setIsCinemaModeOpen(false)}
-              onAskAI={(q) => {
-                setIsCinemaModeOpen(false);
-                handleSend();
-                setInput(q);
-                setTimeout(() => handleSend(), 500); // trigger send after setting input
-              }}
-            />
-          </Suspense>
-        )}
-      </AnimatePresence>
       <AnimatePresence>
         {screenStream && (
           <Suspense fallback={null}>
@@ -3993,7 +4142,7 @@ ${artifactsInstruction}`;
             ref={scrollRef}
             onScroll={handleScroll}
             className={cn("overflow-y-auto overflow-x-hidden pb-10 pt-4 relative custom-scrollbar",
-              isWorkspaceOpen ? "hidden" : "flex-1 w-full"
+              "flex-1 w-full"
             )}
           >
             <div className="max-w-5xl mx-auto px-4 md:px-8 w-full">
@@ -4020,7 +4169,11 @@ ${artifactsInstruction}`;
 
               <div className="space-y-12 w-full max-w-full min-w-0">
                 {messages
-                  .filter((msg) => !(isGenerating && msg.id && msg.id === activeModelMessageIdRef.current))
+                  .filter((msg, i, arr) => {
+                    const isLastMsg = i === arr.length - 1;
+                    if (isGenerating && isLastMsg && msg.role === 'model') return false;
+                    return !(isGenerating && msg.id && msg.id === activeModelMessageIdRef.current);
+                  })
                   .map((msg, i) => (
                   <MessageBubble
                     key={msg.id || `msg-${i}`}
@@ -4049,13 +4202,22 @@ ${artifactsInstruction}`;
                   >
                     {(!liveStreamText && !streamingThinkContent) ? (
                       <>
-                        <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-bg-surface border border-border-strong overflow-hidden shadow-lg">
-                          <AILogo mode={userSettings.mode} />
+                        <div className="flex items-center gap-3 w-full">
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 bg-bg-surface border border-border-strong overflow-hidden shadow-lg">
+                            <AILogo mode={userSettings.mode} />
+                          </div>
+                          <span className={`text-xs font-bold uppercase tracking-wider animate-pulse bg-clip-text text-transparent ${
+                            userSettings?.mode === "Thinking" ? "bg-gradient-to-r from-red-400 via-rose-500 to-red-600" :
+                            userSettings?.mode === "Student" ? "bg-gradient-to-r from-blue-400 via-indigo-500 to-cyan-400" :
+                            userSettings?.mode === "Nano Banana 2" ? "bg-gradient-to-r from-yellow-300 via-amber-400 to-yellow-500" :
+                            "bg-gradient-to-r from-purple-400 via-fuchsia-500 to-purple-600"
+                          }`}>
+                            Dev AI
+                          </span>
                         </div>
                         {isGenerating && (
-                          <div className="flex items-center gap-3 px-1 mb-2 mt-4 ml-1">
-                            <div className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-                            <GenerationTimer statusMessage={statusMessage} startTime={generationStartTime || Date.now()} />
+                          <div className="flex flex-col gap-2 mt-4 ml-1 max-w-sm w-full">
+                            <GenerationTimer statusMessage={_statusMessage || "Pensando"} startTime={generationStartTime || Date.now()} />
                           </div>
                         )}
                       </>
@@ -4064,22 +4226,8 @@ ${artifactsInstruction}`;
                         msg={{ role: "model", content: liveStreamText || "", isGenerating: true, streamingThinkContent: streamingThinkContent }}
                         isCodeMode={isCodeMode}
                         userSettings={userSettings}
-                        statusNode={
-                          statusMessage ? (
-                            <div className="flex items-center gap-2 mt-2">
-                               <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-                               <span className="text-xs text-text-muted italic flex items-center gap-1">
-                                 {statusMessage}
-                               </span>
-                             </div>
-                          ) : (
-                            <div className="flex items-center gap-2 mt-2">
-                               <div className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />
-                               <span className="text-xs text-text-muted italic flex items-center gap-1">
-                                 <GenerationTimer statusMessage={statusMessage} startTime={generationStartTime || Date.now()} />
-                               </span>
-                             </div>
-                          )
+                        generationTimerNode={
+                          <GenerationTimer statusMessage={_statusMessage || null} startTime={generationStartTime || Date.now()} />
                         }
                       />
                     )}
@@ -4089,25 +4237,6 @@ ${artifactsInstruction}`;
             </AnimatePresence>
           </div>
         </main>
-        <AnimatePresence>
-        {isWorkspaceOpen && (
-          <motion.div 
-            initial={{ width: 0, opacity: 0 }}
-            animate={{ width: "100%", opacity: 1 }}
-            exit={{ width: 0, opacity: 0 }}
-            transition={{ type: "spring", bounce: 0, duration: 0.4 }}
-            className="w-full md:w-1/2 h-full bg-[#1e1e1e] overflow-hidden flex flex-col z-10 relative shrink-0"
-          >
-            <Suspense fallback={<div className="flex-1 bg-black w-full h-full" />}>
-              <CanvasWorkspace 
-                code="/* Bem-vindo ao Canvas Workspace.\nCrie códigos, sites e textos e colabore diretamente aqui. */" 
-                onClose={() => setIsWorkspaceOpen(false)} 
-                userSettings={userSettings}
-              />
-            </Suspense>
-          </motion.div>
-        )}
-        </AnimatePresence>
         </div>
 
         {/* Input Footer */}
@@ -4217,11 +4346,11 @@ ${artifactsInstruction}`;
                       )}
                       <div className="flex flex-col py-1">
                         <span className="text-xs font-medium text-text-primary max-w-[120px] truncate">
-                          {att.file?.name || att.meta?.name || (att.mimeType.startsWith("image/") ? "Imagem" : "Arquivo")}
+                          {att.file?.name || (att as any).meta?.name || (att.mimeType.startsWith("image/") ? "Imagem" : "Arquivo")}
                         </span>
-                        {att.meta && att.meta.lineCount && (
+                        {(att as any).meta && (att as any).meta.lineCount && (
                           <span className="text-[10px] text-text-muted font-mono leading-tight">
-                            {att.meta.lineCount.toLocaleString()} linhas
+                            {(att as any).meta.lineCount.toLocaleString()} linhas
                           </span>
                         )}
                       </div>
@@ -4364,14 +4493,22 @@ ${artifactsInstruction}`;
                           <span className="text-base leading-none">🍌</span> Nano Banana 2
                         </button>
                         <button
-                          key="btn-workspace"
+                          key="btn-auto-apply"
                           onClick={() => {
-                            setIsWorkspaceOpen(true);
+                            updateSetting("autoApplyCode", !userSettings.autoApplyCode);
                             setIsAttachmentMenuOpen(false);
                           }}
-                          className="w-full flex items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
+                          className="w-full flex items-center justify-between px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors"
                         >
-                          <MonitorPlay size={16} className="text-emerald-400" /> <span className="text-emerald-400">Abrir Canvas / Code</span>
+                          <div className="flex items-center gap-3">
+                            <Code2 size={16} className={userSettings.autoApplyCode ? "text-blue-400" : "text-text-muted"} />
+                            <span className={userSettings.autoApplyCode ? "text-blue-400 font-medium" : "text-text-muted"}>
+                              Auto-Apply Code
+                            </span>
+                          </div>
+                          <div className={`w-8 h-4 rounded-full transition-colors relative ${userSettings.autoApplyCode ? 'bg-blue-500' : 'bg-[#3f3f46]'}`}>
+                             <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all duration-300 ${userSettings.autoApplyCode ? 'right-0.5' : 'left-0.5'}`} />
+                          </div>
                         </button>
                         <button
                           key="btn-game"
@@ -4450,17 +4587,6 @@ ${artifactsInstruction}`;
                             {screenStream ? "Parar de Compartilhar" : "Compartilhar Tela"}
                           </span>
                         </button>
-                        <button
-                          key="btn-cinema"
-                          onClick={() => {
-                            setIsCinemaModeOpen(true);
-                            setIsAttachmentMenuOpen(false);
-                          }}
-                          className="flex md:hidden w-full items-center gap-3 px-4 py-2 text-sm text-text-primary hover:bg-bg-surface-hover transition-colors border-t border-border-subtle mt-1 pt-2"
-                        >
-                          <span className="text-red-400">🍿</span>
-                          <span className="text-red-400">Modo Cinema</span>
-                        </button>
                       </div>
                     )}
                   </div>
@@ -4533,13 +4659,19 @@ ${artifactsInstruction}`;
                     ) : (
                       <button
                         onClick={handleListen}
-                        disabled={currentUserRole === "view"}
+                        disabled={currentUserRole === "view" || isTranscribing}
                         className={cn(
                           "w-10 h-10 rounded-full flex items-center justify-center transition-colors disabled:opacity-50",
                           isListening ? "text-red-500 bg-red-500/10" : "text-[#a1a1aa] hover:text-white hover:bg-[#2f2f2f]"
                         )}
                       >
-                        {isListening ? <MicOff size={22} strokeWidth={1.5} /> : <Mic size={22} strokeWidth={1.5} />}
+                        {isTranscribing ? (
+                          <Loader2 size={22} strokeWidth={1.5} className="animate-spin text-primary" />
+                        ) : isListening ? (
+                          <MicOff size={22} strokeWidth={1.5} />
+                        ) : (
+                          <Mic size={22} strokeWidth={1.5} />
+                        )}
                       </button>
                     )}
                   </div>
@@ -4563,10 +4695,6 @@ ${artifactsInstruction}`;
               onLogout={handleLogout}
               onClearHistory={clearAllChats}
               logs={logs}
-              onOpenWorkspace={() => {
-                setIsSettingsOpen(false);
-                setIsWorkspaceOpen(true);
-              }}
             />
           </Suspense>
         )}

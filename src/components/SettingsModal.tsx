@@ -11,7 +11,6 @@ interface SettingsModalProps {
   hasCustomKey: boolean;
   onLogout: () => void;
   onClearHistory: () => void;
-  onOpenWorkspace: () => void;
   logs?: { type: string; msg: string; time: Date }[];
 }
 
@@ -23,7 +22,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   hasCustomKey,
   onLogout,
   onClearHistory,
-  onOpenWorkspace,
   logs = [],
 }) => {
   const [height, setHeight] = useState(window.innerHeight * 0.8);
@@ -306,20 +304,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             />
             <p className="text-xs text-text-muted mt-3 italic">
               Você pode visualizar, editar ou excluir as memórias que a IA guardou sobre você.
-            </p>
-          </div>
-
-          {/* Studio Workspace */}
-          <div className="pt-4 border-t border-border-strong">
-            <button
-              onClick={onOpenWorkspace}
-              className="w-full flex items-center justify-center gap-3 p-4 rounded-2xl bg-emerald-500/10 text-emerald-500 font-bold hover:bg-emerald-500/20 transition-all border border-emerald-500/20 shadow-sm"
-            >
-              <Code2 size={24} />
-              Abrir Studio / Criador de Jogos
-            </button>
-            <p className="text-xs text-text-muted mt-3 text-center italic">
-              Acesse o modo IDE em tela cheia para programar e desenvolver projetos sem interrupções.
             </p>
           </div>
 

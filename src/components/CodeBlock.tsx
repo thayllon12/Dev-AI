@@ -36,8 +36,7 @@ const lazyWithRetry = (componentImport: () => Promise<any>) =>
   });
 
 
-const FullscreenEditor = lazyWithRetry(() => import("./FullscreenEditor").then(m => ({ default: m.FullscreenEditor })));
-const GameModal = lazyWithRetry(() => import("./GameModal").then(m => ({ default: m.GameModal })));
+
 
 export function CodeBlock({
   language,
@@ -58,8 +57,6 @@ export function CodeBlock({
 }) {
   const [copied, setCopied] = useState(false);
   const [isExpanded, setIsExpanded] = useState(!!isGenerating);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [isConstrained, setIsConstrained] = useState(true);
   const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "success">("idle");
 
@@ -163,21 +160,6 @@ export function CodeBlock({
 
   return (
     <>
-      <Suspense fallback={null}>
-        {isPlaying && (
-          <GameModal code={code} onClose={() => setIsPlaying(false)} userSettings={userSettings} />
-        )}
-        {isFullscreen && (
-          <FullscreenEditor
-            code={code}
-            language={language}
-            onClose={() => setIsFullscreen(false)}
-            fullMessageContent={fullMessageContent}
-            onAskAI={onAskAI}
-            userSettings={userSettings}
-          />
-        )}
-      </Suspense>
       <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong w-full max-w-full min-w-0">
         <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans overflow-x-auto whitespace-nowrap custom-scrollbar gap-4">
           <div className="flex items-center gap-3">
@@ -187,22 +169,6 @@ export function CodeBlock({
             </span>
           </div>
           <div className="flex items-center gap-3 ml-auto">
-            {language === "html" && (
-              <button
-                onClick={() => setIsPlaying(true)}
-                className="flex items-center gap-1.5 hover:text-green-400 transition-colors text-green-500 font-bold"
-              >
-                <Play size={14} />
-                Preview / Jogar
-              </button>
-            )}
-            <button
-              onClick={() => setIsFullscreen(true)}
-              className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
-            >
-              <Maximize2 size={14} />
-              Tela Cheia
-            </button>
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
