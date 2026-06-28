@@ -81,19 +81,19 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
             initial={{ scale: 0.95, opacity: 0, y: 20 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
             exit={{ scale: 0.95, opacity: 0, y: 20 }}
-            className="bg-[#1e1e1e] w-full max-w-5xl h-full max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden border border-white/10 flex flex-col"
+            className="bg-bg-main w-full max-w-5xl h-full max-h-[90vh] rounded-2xl shadow-2xl overflow-hidden border border-border-strong flex flex-col"
           >
-            <div className="flex items-center justify-between p-4 border-b border-white/10 bg-[#252526]">
+            <div className="flex items-center justify-between p-4 border-b border-border-subtle bg-bg-surface">
               <div className="flex items-center gap-3">
-                <h2 className="text-lg font-medium text-white">{fileName}</h2>
-                <span className="text-xs px-2 py-1 bg-white/10 rounded-md text-white/70">
+                <h2 className="text-lg font-medium text-text-primary">{fileName}</h2>
+                <span className="text-xs px-2 py-1 bg-primary/10 text-primary rounded-md">
                   {mimeType}
                 </span>
               </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleCopy}
-                  className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+                  className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2"
                   title="Copiar"
                 >
                   <Copy size={18} />
@@ -101,16 +101,16 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
                 </button>
                 <button
                   onClick={handleDownload}
-                  className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-lg transition-colors flex items-center gap-2"
+                  className="p-2 text-text-muted hover:text-primary hover:bg-primary/10 rounded-lg transition-colors flex items-center gap-2"
                   title="Baixar Arquivo"
                 >
                   <Download size={18} />
                   <span className="text-sm hidden sm:inline">Download</span>
                 </button>
-                <div className="w-px h-6 bg-white/20 mx-1" />
+                <div className="w-px h-6 bg-border-strong mx-1" />
                 <button
                   onClick={onClose}
-                  className="p-2 text-white/70 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-colors"
+                  className="p-2 text-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
                   title="Fechar"
                 >
                   <X size={20} />
@@ -118,34 +118,34 @@ export const FilePreviewModal: React.FC<FilePreviewModalProps> = ({
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto p-4 bg-[#1e1e1e]">
+            <div className="flex-1 overflow-auto p-4 bg-bg-main">
               {isImage ? (
                 <div className="w-full h-full flex items-center justify-center">
                   <img
                     src={dataUrl}
                     alt={fileName}
-                    className="max-w-full max-h-full object-contain rounded-lg"
+                    className="max-w-full max-h-full object-contain rounded-lg shadow-md"
                     referrerPolicy="no-referrer"
                   />
                 </div>
               ) : isAudio ? (
-                <div className="w-full h-full flex items-center justify-center bg-[#252526] rounded-lg">
+                <div className="w-full h-full flex items-center justify-center bg-bg-surface rounded-lg border border-border-subtle">
                   <audio controls src={dataUrl} className="w-full max-w-md" />
                 </div>
               ) : isVideo ? (
-                <div className="w-full h-full flex items-center justify-center bg-black rounded-lg">
-                  <video controls src={dataUrl} className="max-w-full max-h-full rounded-lg" />
+                <div className="w-full h-full flex items-center justify-center bg-black/5 rounded-lg overflow-hidden border border-border-subtle">
+                  <video controls src={dataUrl} className="max-w-full max-h-full" />
                 </div>
               ) : isPdf ? (
-                <div className="w-full h-full flex items-center justify-center bg-white rounded-lg overflow-hidden">
+                <div className="w-full h-full flex items-center justify-center bg-white rounded-lg overflow-hidden shadow-inner">
                   <iframe src={dataUrl} className="w-full h-full border-0" title={fileName} />
                 </div>
               ) : (
-                <div className="h-full">
+                <div className="h-full rounded-xl overflow-hidden border border-border-subtle shadow-sm">
                   <CodeBlock
                     language="text"
                     code={getTextContent()}
-                    userSettings={{}}
+                    userSettings={{ codeWrap: true }}
                   />
                 </div>
               )}

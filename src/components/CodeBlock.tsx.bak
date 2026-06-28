@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, lazy, Suspense, useDeferredValue, memo, useMemo } from "react";
+import React, { useState, useRef, useEffect, lazy, Suspense } from "react";
 import {
   Copy,
   CheckCheck,
@@ -10,116 +10,12 @@ import {
   File,
   ExternalLink,
   ShieldAlert,
-  ArrowDown,
-  Server
+  ArrowDown
 } from "lucide-react";
 import { copyToClipboard } from "../lib/utils";
+import { vscDarkPlus } from "react-syntax-highlighter/dist/esm/styles/prism";
 import { toast } from "sonner";
-import { HtmlPreviewModal } from "./HtmlPreviewModal";
-import { auth } from "../firebase";
-
-const highlightCode = (code: string) => {
-  const keywords = new Set(["const", "let", "var", "function", "return", "if", "else", "for", "while", "class", "import", "export", "from", "default", "interface", "type", "public", "private", "protected", "async", "await", "new", "this", "super", "extends", "implements", "true", "false", "null", "undefined", "switch", "case", "break", "continue"]);
-  
-  let result = "";
-  let i = 0;
-  
-  const escapeHtml = (str: string) => str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  while (i < code.length) {
-    if (code.startsWith('//', i)) {
-      let end = code.indexOf('\n', i);
-      if (end === -1) end = code.length;
-      result += `<span style="color: #a8ff60; font-style: italic">${escapeHtml(code.substring(i, end))}</span>`;
-      i = end;
-      continue;
-    }
-    
-    if (code.startsWith('/*', i)) {
-      let end = code.indexOf('*/', i + 2);
-      if (end === -1) end = code.length;
-      else end += 2;
-      result += `<span style="color: #a8ff60; font-style: italic">${escapeHtml(code.substring(i, end))}</span>`;
-      i = end;
-      continue;
-    }
-
-    if (code[i] === '"' || code[i] === "'" || code[i] === "`") {
-      const quote = code[i];
-      let end = i + 1;
-      while (end < code.length && code[end] !== quote) {
-        if (code[end] === '\\') end++;
-        end++;
-      }
-      if (end < code.length) end++;
-      result += `<span style="color: #f1fa8c">${escapeHtml(code.substring(i, end))}</span>`;
-      i = end;
-      continue;
-    }
-
-    if (/[a-zA-Z_$]/.test(code[i])) {
-      let end = i + 1;
-      while (end < code.length && /[a-zA-Z0-9_$]/.test(code[end])) {
-        end++;
-      }
-      const word = code.substring(i, end);
-      
-      let j = end;
-      while(j < code.length && /\s/.test(code[j])) j++;
-      if (j < code.length && code[j] === '(') {
-         result += `<span style="color: #50fa7b; font-weight: bold">${escapeHtml(word)}</span>`;
-      } else if (keywords.has(word)) {
-         result += `<span style="color: #ff79c6; font-weight: bold">${escapeHtml(word)}</span>`;
-      } else {
-         result += escapeHtml(word);
-      }
-      
-      i = end;
-      continue;
-    }
-
-    if (/[0-9]/.test(code[i])) {
-      let end = i + 1;
-      while (end < code.length && /[0-9.]/.test(code[end])) end++;
-      result += `<span style="color: #bd93f9">${escapeHtml(code.substring(i, end))}</span>`;
-      i = end;
-      continue;
-    }
-
-    result += escapeHtml(code[i]);
-    i++;
-  }
-
-  return result;
-};
-
-const NativeHighlighter = memo(({ code, codeWrap }: { code: string, codeWrap?: boolean }) => {
-  const lineNumbers = useMemo(() => {
-    let count = 0;
-    for (let i = 0; i < code.length; i++) if (code[i] === '\n') count++;
-    return Array.from({ length: count + 1 }, (_, i) => i + 1).join('\n');
-  }, [code]);
-
-  const html = useMemo(() => {
-    if (code.length > 500000) return code.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-    return highlightCode(code);
-  }, [code]);
-
-  return (
-    <div className="flex font-mono text-[13px] leading-[1.4] m-0 p-0 bg-transparent text-[#d4d4d4]" style={{ tabSize: 2 }}>
-      <div 
-        className="text-right pr-4 select-none text-white/30 whitespace-pre overflow-hidden flex-shrink-0"
-        style={{ minWidth: "3em" }}
-      >
-        {lineNumbers}
-      </div>
-      <pre 
-        className={`m-0 p-0 ${codeWrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre'} custom-scrollbar flex-1 outline-none font-inherit`}
-        dangerouslySetInnerHTML={{ __html: html }}
-      />
-    </div>
-  );
-});
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 
 const lazyWithRetry = (componentImport: () => Promise<any>) => 
   lazy(async () => {
@@ -142,7 +38,7 @@ const lazyWithRetry = (componentImport: () => Promise<any>) =>
 
 
 
-export const CodeBlock = memo(function CodeBlock({
+export function CodeBlock({
   language,
   code,
   userSettings,
@@ -163,13 +59,11 @@ export const CodeBlock = memo(function CodeBlock({
   const [isExpanded, setIsExpanded] = useState(!!isGenerating);
   const [isConstrained, setIsConstrained] = useState(true);
   const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "success">("idle");
-  const [showHtmlPreview, setShowHtmlPreview] = useState(false);
 
   const codeContainerRef = useRef<HTMLDivElement>(null);
   const scrollPositionRef = useRef<number>(0);
 
-  const deferredCode = useDeferredValue(code);
-  const isLongCode = deferredCode.split("\n").length > 15;
+  const isLongCode = code.split("\n").length > 15;
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     scrollPositionRef.current = e.currentTarget.scrollTop;
@@ -265,20 +159,24 @@ export const CodeBlock = memo(function CodeBlock({
   };
 
 const handlePreviewHtml = () => {
-    setShowHtmlPreview(true);
+    const newWindow = window.open();
+    if (newWindow) {
+      newWindow.document.write(code);
+      newWindow.document.close();
+    }
   };
 
   return (
     <>
       <div className="my-4 rounded-xl overflow-hidden bg-bg-code border border-border-strong w-full max-w-full min-w-0 [content-visibility:auto] [contain-intrinsic-size:100px]">
         <div className="flex items-center justify-between px-4 py-2 bg-bg-code-header text-text-muted text-xs font-sans overflow-x-auto whitespace-nowrap custom-scrollbar gap-4">
-          <div className="flex items-center gap-3 shrink-0">
+          <div className="flex items-center gap-3">
             <span className="uppercase font-semibold">{language || "text"}</span>
             <span className="text-[10px] opacity-50">
-              {deferredCode.split("\n").length} linhas
+              {code.split("\n").length} linhas
             </span>
           </div>
-          <div className="flex items-center gap-3 ml-auto shrink-0">
+          <div className="flex items-center gap-3 ml-auto">
             <button
               onClick={() => setIsExpanded(!isExpanded)}
               className="flex items-center gap-1.5 hover:text-text-primary transition-colors"
@@ -289,7 +187,7 @@ const handlePreviewHtml = () => {
             {language?.toLowerCase() === "html" && (
               <button
                 onClick={handlePreviewHtml}
-                className="flex items-center gap-1.5 text-green-500 hover:text-green-400 transition-colors font-bold"
+                className="flex items-center gap-1.5 text-blue-400 hover:text-blue-300 transition-colors font-bold"
                 title="Testar Renderização HTML"
               >
                 <Play size={14} />
@@ -336,9 +234,31 @@ const handlePreviewHtml = () => {
             <div 
               ref={codeContainerRef}
               onScroll={handleScroll}
-              className={`p-4 overflow-x-auto overscroll-contain text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-[50vh] overflow-y-auto' : ''}`}
+              className={`p-4 overflow-x-auto overscroll-contain text-[13px] font-mono custom-scrollbar ${isConstrained && isLongCode ? 'max-h-[600px] overflow-y-auto' : ''}`}
             >
-              <NativeHighlighter code={deferredCode} codeWrap={userSettings?.codeWrap} />
+              {code.length > 500000 ? (
+                 <pre className="m-0 p-0 bg-transparent text-[#d4d4d4] font-mono text-[13px] leading-relaxed whitespace-pre-wrap break-words overflow-x-auto" style={{ tabSize: 2 }}>
+                   <code>{code}</code>
+                 </pre>
+              ) : (
+                <SyntaxHighlighter
+                   language={language === "luau" ? "lua" : language}
+                   style={vscDarkPlus}
+                   customStyle={{ margin: 0, padding: 0, background: "transparent" }}
+                   wrapLines={true}
+                   wrapLongLines={true}
+                   showLineNumbers={true}
+                   lineNumberStyle={{
+                     minWidth: "2.5em",
+                     paddingRight: "1em",
+                     color: "rgba(255,255,255,0.3)",
+                     textAlign: "right",
+                     userSelect: "none"
+                   }}
+                 >
+                   {code}
+                </SyntaxHighlighter>
+              )}
             </div>
             
             {isConstrained && isLongCode && (
@@ -353,12 +273,6 @@ const handlePreviewHtml = () => {
           </div>
         )}
       </div>
-      
-      <HtmlPreviewModal 
-         isOpen={showHtmlPreview} 
-         onClose={() => setShowHtmlPreview(false)} 
-         code={deferredCode} 
-      />
     </>
   );
-});
+}

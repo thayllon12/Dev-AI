@@ -115,7 +115,8 @@ service cloud.firestore {
              data.mode in ['Dev AI', 'Dev AI Code'] &&
              data.personality is string && data.personality.size() < 500 &&
              (!( 'theme' in data ) || data.theme in ['light', 'dark', 'auto']) &&
-             (!( 'colorTheme' in data ) || data.colorTheme in ['auto', 'blue', 'red', 'black', 'green', 'purple']) &&
+             (!( 'colorTheme' in data ) || data.colorTheme in ['auto', 'blue', 'red', 'black', 'green', 'purple', 'liquid-grass']) &&
+             (!( 'highContrast' in data ) || data.highContrast is bool) &&
              (!( 'vibration' in data ) || data.vibration is bool) &&
              (!( 'memory' in data ) || (data.memory is string && data.memory.size() < 5000)) &&
              (!( 'fullscreenEditor' in data ) || data.fullscreenEditor is bool) &&

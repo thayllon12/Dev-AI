@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
-import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2, Volume2, Search, Copy, CheckCheck, MessageSquare } from "lucide-react";
+import { X, Key, Palette, Sun, Moon, Monitor, Settings, LogOut, Trash2, Code2, Volume2, Search, Copy, CheckCheck, MessageSquare, RotateCcw } from "lucide-react";
 import { cn, copyToClipboard } from "../lib/utils";
 
 interface SettingsModalProps {
@@ -12,6 +12,10 @@ interface SettingsModalProps {
   onLogout: () => void;
   onClearHistory: () => void;
   logs?: { type: string; msg: string; time: Date }[];
+  deletedChats?: any[];
+  onRestoreChat?: (chat: any) => void;
+  onHardDeleteChat?: (chat: any) => void;
+  onBatchAction?: (action: "restore" | "hardDelete", chatIds: string[]) => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -23,11 +27,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onLogout,
   onClearHistory,
   logs = [],
+  deletedChats = [],
+  onRestoreChat,
+  onHardDeleteChat,
+  onBatchAction,
 }) => {
   const [height, setHeight] = useState(window.innerHeight * 0.8);
   const [isResizing, setIsResizing] = useState(false);
   const [logFilter, setLogFilter] = useState<'all' | 'error' | 'warn' | 'info'>('all');
   const [copiedLogs, setCopiedLogs] = useState(false);
+  const [deletingChatId, setDeletingChatId] = useState<string | null>(null);
+  const [deleteConfirmCount, setDeleteConfirmCount] = useState<number>(0);
+  const [trashSelectionMode, setTrashSelectionMode] = useState<boolean>(false);
+  const [selectedTrashIds, setSelectedTrashIds] = useState<Set<string>>(new Set());
+
+  const handleHardDelete = (chat: any) => {
+    if (deletingChatId === chat.id) {
+      if (deleteConfirmCount === 1) {
+        setDeleteConfirmCount(2);
+      } else if (deleteConfirmCount === 2) {
+        if (onHardDeleteChat) onHardDeleteChat(chat);
+        setDeletingChatId(null);
+        setDeleteConfirmCount(0);
+      }
+    } else {
+      setDeletingChatId(chat.id);
+      setDeleteConfirmCount(1);
+    }
+  };
 
   const handleMouseDown = (e: React.MouseEvent | React.TouchEvent) => {
     setIsResizing(true);
@@ -114,7 +141,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   {[
                     { id: "light", icon: <Sun size={14} />, label: "Claro" },
                     { id: "dark", icon: <Moon size={14} />, label: "Escuro" },
-                    { id: "auto", icon: <Monitor size={14} />, label: "Sistema" }
+                    { id: "auto", icon: <Monitor size={14} />, label: "Sistema" },
+                    { id: "liquid-glass", icon: <Monitor size={14} />, label: "Darker" }
                   ].map((t) => (
                     <button
                       key={t.id}
@@ -143,6 +171,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     { id: "green", color: "bg-emerald-500", label: "Verde" },
                     { id: "purple", color: "bg-purple-500", label: "Roxo" },
                     { id: "black", color: "bg-gray-800", label: "Preto" },
+                    { id: "liquid-grass", color: "bg-gradient-to-tr from-emerald-600 to-lime-400", label: "Liquid Grass" },
                   ].map((c) => (
                     <button
                       key={c.id}
@@ -167,6 +196,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="space-y-4 pt-4 border-t border-border-strong">
             {[
               {
+                id: "highContrast",
+                label: "Alto Contraste",
+                desc: "Modo acessível para descanso ou deficiência visual.",
+                icon: <Monitor size={18} />,
+              },
+              {
                 id: "notificationsEnabled",
                 label: "Notificações",
                 desc: "Receber alertas de novas mensagens.",
@@ -185,6 +220,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 icon: <Volume2 size={18} />,
               },
               {
+                id: "soundEffectsEnabled",
+                label: "Efeitos Sonoros",
+                desc: "Sons de abertura e de finalização",
+                icon: <Volume2 size={18} />,
+              },
+              {
                 id: "vibration",
                 label: "Vibração Haptic",
                 desc: "Feedback tátil junto com digitação",
@@ -195,6 +236,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 label: "Pesquisa Web (Google)",
                 desc: "Permitir buscas em tempo real na internet",
                 icon: <Search size={18} />,
+              },
+              {
+                id: "codeWrap",
+                label: "Quebra de Linha em Código",
+                desc: "Quebrar linhas longas nos blocos de código",
+                icon: <Code2 size={18} />,
               },
               {
                 id: "realVoiceEnabled",
@@ -304,6 +351,123 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             />
             <p className="text-xs text-text-muted mt-3 italic">
               Você pode visualizar, editar ou excluir as memórias que a IA guardou sobre você.
+            </p>
+          </div>
+
+          {/* Deleted Chats (Trash) Section */}
+          <div className="pt-4 border-t border-border-strong">
+            <div className="flex items-center justify-between mb-3">
+              <label className="text-sm font-bold text-text-secondary uppercase tracking-wider flex items-center">
+                <span>Lixeira (Chats Excluídos)</span>
+              </label>
+              {deletedChats && deletedChats.length > 0 && (
+                <button
+                  onClick={() => {
+                    setTrashSelectionMode(!trashSelectionMode);
+                    setSelectedTrashIds(new Set());
+                  }}
+                  className="text-xs text-primary hover:underline font-medium"
+                >
+                  {trashSelectionMode ? "Cancelar" : "Selecionar"}
+                </button>
+              )}
+            </div>
+            
+            {trashSelectionMode && selectedTrashIds.size > 0 && (
+              <div className="flex gap-2 mb-3">
+                <button
+                  onClick={() => {
+                    if (onBatchAction) {
+                      onBatchAction("restore", Array.from(selectedTrashIds));
+                      setTrashSelectionMode(false);
+                      setSelectedTrashIds(new Set());
+                    }
+                  }}
+                  className="flex-1 py-1.5 text-xs bg-emerald-500/10 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-colors border border-emerald-500/20"
+                >
+                  Restaurar ({selectedTrashIds.size})
+                </button>
+                <button
+                  onClick={() => {
+                    if (onBatchAction) {
+                      onBatchAction("hardDelete", Array.from(selectedTrashIds));
+                      setTrashSelectionMode(false);
+                      setSelectedTrashIds(new Set());
+                    }
+                  }}
+                  className="flex-1 py-1.5 text-xs bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500 hover:text-white transition-colors border border-red-500/20"
+                >
+                  Excluir ({selectedTrashIds.size})
+                </button>
+              </div>
+            )}
+
+            <div className="bg-bg-surface border border-border-subtle rounded-2xl overflow-hidden shadow-sm flex flex-col">
+              {(!deletedChats || deletedChats.length === 0) ? (
+                <div className="p-6 text-center text-text-muted text-sm italic">
+                  A lixeira está vazia.
+                </div>
+              ) : (
+                <div className="max-h-60 overflow-y-auto custom-scrollbar flex flex-col">
+                  {deletedChats.map((chat) => {
+                    const daysLeft = Math.max(0, 10 - Math.floor((new Date().getTime() - (chat.deletedAt?.toDate ? chat.deletedAt.toDate() : new Date(chat.deletedAt)).getTime()) / (1000 * 3600 * 24)));
+                    return (
+                      <div key={chat.id} 
+                        onClick={() => {
+                          if (trashSelectionMode) {
+                            const newSet = new Set(selectedTrashIds);
+                            if (newSet.has(chat.id)) newSet.delete(chat.id);
+                            else newSet.add(chat.id);
+                            setSelectedTrashIds(newSet);
+                          }
+                        }}
+                        className={`flex items-center justify-between p-3 border-b border-white/5 last:border-b-0 transition-colors group ${trashSelectionMode ? 'cursor-pointer hover:bg-bg-surface-hover' : ''} ${selectedTrashIds.has(chat.id) ? 'bg-primary/10' : 'hover:bg-bg-surface-hover'}`}>
+                        
+                        {trashSelectionMode && (
+                          <div className={`mr-3 w-4 h-4 rounded border flex items-center justify-center shrink-0 ${selectedTrashIds.has(chat.id) ? "bg-primary border-primary text-white" : "border-border-strong"}`}>
+                            {selectedTrashIds.has(chat.id) && <CheckCheck size={10} />}
+                          </div>
+                        )}
+                        
+                        <div className="flex flex-col flex-1 min-w-0 pr-3">
+                          <span className="text-sm text-text-primary font-medium truncate">{chat.title || "Chat sem título"}</span>
+                          <span className="text-xs text-text-muted">Exclusão permanente em {daysLeft} dias</span>
+                        </div>
+                        
+                        {!trashSelectionMode && (
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => onRestoreChat && onRestoreChat(chat)}
+                              className="p-1.5 bg-bg-surface border border-border-subtle text-emerald-400 hover:text-emerald-300 hover:bg-emerald-500/10 rounded-lg transition-colors flex items-center gap-1"
+                              title="Restaurar chat"
+                            >
+                              <RotateCcw size={14} />
+                              <span className="text-xs hidden sm:inline">Restaurar</span>
+                            </button>
+                            <button
+                              onClick={() => handleHardDelete(chat)}
+                              className="p-1.5 bg-bg-surface border border-border-subtle text-red-500 hover:bg-red-500/10 rounded-lg transition-colors flex items-center gap-1"
+                              title="Excluir permanentemente"
+                            >
+                              <Trash2 size={14} />
+                              {deletingChatId === chat.id ? (
+                                <span className="text-xs font-bold px-1 whitespace-nowrap text-red-400">
+                                  {deleteConfirmCount === 1 ? "Tem certeza?" : "Tem certeza mesmo?"}
+                                </span>
+                              ) : (
+                                <span className="text-xs hidden sm:inline">Excluir</span>
+                              )}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <p className="text-xs text-text-muted mt-3 italic">
+              Chats excluídos ficarão na lixeira por até 10 dias antes de serem apagados para sempre.
             </p>
           </div>
 

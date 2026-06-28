@@ -57,18 +57,19 @@ body {
 }
 
 .custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
   background: transparent;
+  margin: 4px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #424242;
-  border-radius: 10px;
+  background: rgba(120, 120, 120, 0.4);
+  border-radius: 20px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #4f4f4f;
+  background: rgba(120, 120, 120, 0.8);
 }
 
 .markdown-body img {
@@ -106,6 +107,43 @@ body {
   --primary-hover: #2563eb;
 }
 
+:root.liquid-glass {
+  /* Liquid Glass Theme (Apple iOS frosted glass) */
+  --bg-main: rgba(25, 25, 30, 0.4);
+  --bg-sidebar: rgba(15, 15, 20, 0.4);
+  --bg-surface: rgba(40, 40, 45, 0.3);
+  --bg-surface-hover: rgba(60, 60, 65, 0.5);
+  --bg-code: rgba(20, 20, 25, 0.6);
+  --bg-code-header: rgba(40, 40, 45, 0.5);
+  --bg-modal: rgba(25, 25, 30, 0.75);
+  --bg-modal-footer: rgba(15, 15, 20, 0.75);
+  
+  --text-primary: #ffffff;
+  --text-secondary: #eaeaeb;
+  --text-tertiary: #d4d4d8;
+  --text-muted: #a1a1aa;
+  
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --border-strong: rgba(255, 255, 255, 0.2);
+
+  --primary: #10b981;
+  --primary-hover: #059669;
+  
+  background-image: radial-gradient(circle at 10% 20%, rgba(59, 130, 246, 0.3) 0%, transparent 40%), 
+                    radial-gradient(circle at 90% 80%, rgba(139, 92, 246, 0.3) 0%, transparent 40%),
+                    radial-gradient(circle at 50% 50%, #1e1e1e 0%, #000000 100%);
+  background-attachment: fixed;
+}
+
+:root.liquid-glass body,
+:root.liquid-glass .bg-bg-main,
+:root.liquid-glass .bg-bg-sidebar,
+:root.liquid-glass .bg-bg-surface,
+:root.liquid-glass .bg-bg-modal {
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+}
+
 :root.theme-blue {
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
@@ -129,4 +167,29 @@ body {
 :root.theme-purple {
   --primary: #8b5cf6;
   --primary-hover: #7c3aed;
+}
+
+:root.high-contrast-mode {
+  --bg-main: #000000;
+  --bg-sidebar: #000000;
+  --bg-surface: #000000;
+  --bg-surface-hover: #111111;
+  --bg-modal-overlay: rgba(0, 0, 0, 0.9);
+  --bg-modal-content: #000000;
+  --bg-modal-footer: #000000;
+  
+  --text-primary: #ffffff;
+  --text-secondary: #eeeeee;
+  --text-tertiary: #cccccc;
+  --text-muted: #aaaaaa;
+  
+  --border-subtle: #ffffff;
+  --border-strong: #ffffff;
+}
+
+:root.high-contrast-mode button, 
+:root.high-contrast-mode input, 
+:root.high-contrast-mode textarea,
+:root.high-contrast-mode .border {
+  border: 2px solid white !important;
 }

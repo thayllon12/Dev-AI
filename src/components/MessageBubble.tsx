@@ -6,10 +6,14 @@ import { Copy, CheckCheck, RotateCcw, Edit2, Code2, Download, ExternalLink, More
 import { CodeBlock } from "./CodeBlock";
 import { useClickOutside } from "../hooks/useClickOutside";
 import { FilePreviewModal } from "./FilePreviewModal";
+import { MermaidBlock } from "./MermaidBlock";
+import { JsonViewerBlock } from "./JsonViewerBlock";
+import { ReasoningWeb } from "./ReasoningWeb";
 import { AILogo } from "./AILogo";
 import { copyToClipboard, guessLanguage } from "../lib/utils";
 import { FileText } from "lucide-react";
 import JSZip from "jszip";
+import { FileCard } from "./FileCard";
 
 interface MessageBubbleProps {
   msg: any;
@@ -165,12 +169,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
       if (ai) {
         // Attempt to use Gemini TTS
         const response = await ai.models.generateContent({
-          model: "gemini-2.5-flash",
-          contents: `Leia o seguinte texto de forma expressiva e natural em português do Brasil, num tom amigável. Não leia blocos de código grandes se houver.\n\n${text.substring(0, 5000)}`,
+          model: "gemini-3.1-flash-tts-preview",
+          contents: [{ parts: [{ text: `Leia o seguinte texto de forma expressiva e natural em português do Brasil, num tom amigável. Não leia blocos de código grandes se houver.\n\n${text.substring(0, 5000)}` }] }],
           config: {
             responseModalities: ["AUDIO"],
             speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Puck" } }
+              voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } }
             }
           }
         });
@@ -192,32 +196,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         }
       }
     } catch (e) {
-      console.warn("Gemini TTS failed, falling back to native.", e);
-    }
-
-    // Fallback to native
-    window.speechSynthesis.cancel(); // Clear any stuck speech
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'pt-BR';
-    utterance.rate = 1.05;
-    utterance.pitch = 0.9;
-    const voices = window.speechSynthesis.getVoices();
-    
-    // Preferred "Voz Laranja / Masculina do Google"
-    const selectedVoice = voices.find(v => v.lang.includes("pt-BR") && v.name.includes("Google") && (v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("masc")))
-      || voices.find(v => v.lang.includes("pt-BR") && (v.name.includes("Daniel") || v.name.includes("Antonio") || v.name.includes("Thiago") || v.name.toLowerCase().includes("male") || v.name.toLowerCase().includes("masc"))) 
-      || voices.find(v => v.lang.includes("pt-BR") && v.name.includes("Google"));
-
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-    utterance.onend = () => setIsPlaying(false);
-    utterance.onerror = (e) => {
-      console.error("Speech synthesis error", e);
+      console.error("Gemini TTS failed.", e);
       setIsPlaying(false);
-    };
-    
-    window.speechSynthesis.speak(utterance);
+    }
   };
 
   const handleDownloadProject = async () => {
@@ -259,19 +240,29 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
 
   let thinkContent = "";
   let mainContent = msg.content || "";
+  let generatedFiles: any[] = [];
 
   if (!isUser) {
-    const thinkStart = mainContent.indexOf("<think>");
-    if (thinkStart !== -1) {
-      const thinkEnd = mainContent.indexOf("</think>");
-      if (thinkEnd !== -1) {
-        thinkContent = mainContent.substring(thinkStart + 7, thinkEnd).trim();
-        mainContent = mainContent.substring(0, thinkStart) + mainContent.substring(thinkEnd + 8);
-      } else {
-        thinkContent = mainContent.substring(thinkStart + 7).trim();
-        mainContent = mainContent.substring(0, thinkStart);
-      }
+    let thinkContents: string[] = [];
+    mainContent = mainContent.replace(/<think>([\s\S]*?)<\/think>/g, (match, p1) => {
+      thinkContents.push(p1.trim());
+      return "";
+    });
+    
+    const lastThinkStart = mainContent.lastIndexOf("<think>");
+    if (lastThinkStart !== -1) {
+      thinkContents.push(mainContent.substring(lastThinkStart + 7).trim());
+      mainContent = mainContent.substring(0, lastThinkStart);
     }
+    thinkContent = thinkContents.join("\n\n");
+    
+    mainContent = mainContent.replace(/<generated_files>([\s\S]*?)<\/generated_files>/g, (match, p1) => {
+      try {
+        const files = JSON.parse(p1);
+        generatedFiles.push(...files);
+      } catch (e) { console.error('Error parsing generated files', e); }
+      return "";
+    });
   }
 
   const hasCodeBlocks = msg.content && typeof msg.content === 'string' && msg.content.includes("```");
@@ -288,6 +279,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         const match = /language-(\w+)/.exec(codeProps.className || "");
         const codeString = String(codeProps.children).replace(/\n$/, "");
         const language = match ? match[1] : guessLanguage(codeString);
+        
+        if (language === 'mermaid' || language === 'diagram') {
+          return <MermaidBlock chart={codeString} />;
+        }
+        
+        if (language === 'json') {
+          return <JsonViewerBlock jsonString={codeString} theme={userSettings.theme} />;
+        }
+        
         return (
           <CodeBlock
             language={language}
@@ -366,6 +366,15 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         const match = /language-(\w+)/.exec(codeProps.className || "");
         const codeString = String(codeProps.children).replace(/\n$/, "");
         const language = match ? match[1] : guessLanguage(codeString);
+        
+        if (language === 'mermaid' || language === 'diagram') {
+          return <MermaidBlock chart={codeString} />;
+        }
+        
+        if (language === 'json') {
+          return <JsonViewerBlock jsonString={codeString} theme={userSettings.theme} />;
+        }
+        
         return (
           <CodeBlock
             language={language}
@@ -441,10 +450,10 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.3 }}
-        className={`flex flex-col gap-2 min-w-0 w-full max-w-full ${isUser ? "items-end text-right" : "items-start text-left"}`}
+        className={`group flex flex-col gap-2 min-w-0 w-full max-w-full ${isUser ? "items-end text-right" : "items-start text-left"}`}
       >
         <div
-          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-lg overflow-hidden ${
+          className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 shadow-lg overflow-hidden transition-transform duration-500 hover:rotate-12 ${
             isUser ? "bg-primary text-white" : "bg-bg-surface border border-border-strong"
           }`}
         >
@@ -461,7 +470,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           )}
         </div>
 
-        <div className={`flex flex-col max-w-full min-w-0 ${isUser ? "items-end" : "items-start"}`}>
+        <div className={`relative flex flex-col max-w-full min-w-0 ${isUser ? "items-end" : "items-start"}`}>
           <div className="flex items-center gap-2 mb-1 px-1">
             {isUser ? (
               <span className="text-xs font-bold text-text-muted uppercase tracking-wider">
@@ -495,7 +504,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
             }`}
           >
             <div className={`flex flex-col gap-3 min-w-0 ${isUser ? "max-w-[85%]" : "w-full"}`}>
-              {thinkContent && isThinkVisible && (
+              {(thinkContent || msg.streamingThinkContent) && isThinkVisible && (
                 <div className="bg-bg-surface border border-border-subtle rounded-xl overflow-hidden shadow-sm">
                   <div className="flex items-center justify-between p-2.5 bg-bg-surface-hover/50">
                     <button 
@@ -505,7 +514,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                       aria-expanded={isThinkExpanded}
                     >
                       <Brain size={16} className={isThinkExpanded ? "text-primary" : ""} />
-                      <span>Processo de pensamento</span>
+                      <span>Processo de pensamento {(msg.isGenerating && !!msg.streamingThinkContent) ? "(Em andamento)" : ""}</span>
                       {isThinkExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
                     </button>
                     <button 
@@ -518,8 +527,8 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                     </button>
                   </div>
                   {isThinkExpanded && (
-                    <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary italic whitespace-pre-wrap font-mono leading-relaxed select-text">
-                      {thinkContent}
+                    <div className="p-4 border-t border-border-subtle bg-bg-main/30 text-sm text-text-secondary select-text">
+                      <ReasoningWeb content={msg.streamingThinkContent || thinkContent} isGenerating={msg.isGenerating && !!msg.streamingThinkContent} />
                     </div>
                   )}
                 </div>
@@ -527,7 +536,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
               
               {isUser ? (
                 <div className="flex flex-col items-end w-full max-w-full">
-                  <div className={`bg-bg-surface-hover border border-border-strong px-5 py-3 rounded-2xl rounded-tr-sm inline-block shadow-sm text-left select-text markdown-body max-w-full break-words min-w-0 relative ${!isUserTextExpanded && msg.content.length > 500 ? "max-h-64 overflow-hidden" : "overflow-x-auto"}`}>
+                  <div className={`bg-bg-surface-hover border border-border-strong px-4 sm:px-5 py-3 rounded-2xl rounded-tr-sm inline-flex flex-col shadow-sm text-left select-text markdown-body w-fit max-w-[95%] sm:max-w-[85%] break-words min-w-0 overflow-x-auto relative ${!isUserTextExpanded && msg.content.length > 500 ? "max-h-64 overflow-y-hidden" : ""}`}>
                     <ReactMarkdown
                       remarkPlugins={[remarkGfm]}
                       components={userMarkdownComponents}
@@ -589,6 +598,21 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 >
                   {mainContent}
                 </ReactMarkdown>
+                )}
+                
+                {generatedFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-3 mt-4">
+                    {generatedFiles.map((file, idx) => (
+                       <FileCard
+                         key={idx}
+                         name={file.filename}
+                         size={file.size ? (file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`) : "Desconhecido"}
+                         mimeType={file.mimeType}
+                         downloadUrl={file.downloadUrl}
+                         content={file.content}
+                       />
+                    ))}
+                  </div>
                 )}
               </div>
               )}
@@ -658,11 +682,11 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
           )}
 
           {/* Actions Menu */}
-          <div className={`mt-2 flex items-center gap-2 w-full ${isUser ? "justify-end" : "justify-start"}`}>
+          <div className={`mt-2 flex items-center gap-2 w-full opacity-100 transition-opacity duration-300 ${isUser ? "justify-end" : "justify-start"}`}>
             {!isUser && (
               <button
                 onClick={toggleTTS}
-                className={`p-1.5 rounded-lg transition-all ${
+                className={`p-1.5 rounded-lg transition-all hover:scale-110 active:scale-95 ${
                   isPlaying ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
                 }`}
                 title={isPlaying ? "Parar áudio" : "Ouvir em voz alta"}
@@ -674,7 +698,7 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
             <div className="relative" ref={actionsMenuRef}>
               <button
                 onClick={() => setShowActions(!showActions)}
-                className={`p-1.5 rounded-lg transition-all ${
+                className={`p-1.5 rounded-lg transition-all hover:scale-110 active:scale-95 ${
                   showActions ? "bg-primary/10 text-primary" : "text-text-muted hover:text-text-primary hover:bg-bg-surface-hover"
                 }`}
                 title="Mais opções"
@@ -688,18 +712,37 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  className={`absolute bottom-full mb-1 w-48 py-1 bg-bg-surface border border-border-subtle rounded-xl shadow-xl z-50 flex flex-col ${
+                  className={`absolute bottom-full mb-2 w-max min-w-[200px] max-w-[260px] py-1.5 bg-[#232323] border border-white/5 rounded-2xl shadow-2xl z-[999] flex flex-col max-h-[60vh] overflow-y-auto custom-scrollbar ${
                     isUser ? "right-0" : "left-0"
                   }`}
+                  style={{ boxShadow: "0 10px 40px rgba(0,0,0,0.5)" }}
                 >
+                  <div className="px-3 pb-1.5 mb-0.5">
+                    <span className="text-[12px] font-medium text-[#9ca3af]">
+                      {(() => {
+                        if (!msg.createdAt) return "Hoje, 9:20 PM"; // fallback
+                        try {
+                          const d = msg.createdAt.toDate ? msg.createdAt.toDate() : new Date(msg.createdAt);
+                          const today = new Date();
+                          const isToday = d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
+                          const timeStr = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase();
+                          if (isToday) return `Hoje, ${timeStr}`;
+                          return `${d.toLocaleDateString()} ${timeStr}`;
+                        } catch (e) {
+                          return "Hoje";
+                        }
+                      })()}
+                    </span>
+                  </div>
+
                   <button
                     onClick={() => {
                       handleCopy();
                       setShowActions(false);
                     }}
-                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
                   >
-                    {copied ? <CheckCheck size={16} className="text-emerald-500" /> : <Copy size={16} />}
+                    {copied ? <CheckCheck size={16} className="text-emerald-500" strokeWidth={1.5} /> : <Copy size={16} className="text-white" strokeWidth={1.5} />}
                     <span>Copiar</span>
                   </button>
 
@@ -708,21 +751,86 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                       setShowSelectText(true);
                       setShowActions(false);
                     }}
-                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
+                    className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
                   >
-                    <ExternalLink size={16} />
+                    <FileText size={16} className="text-white" strokeWidth={1.5} />
                     <span>Selecionar texto</span>
                   </button>
 
+                  {onEdit && (
+                    <button
+                      onClick={() => {
+                        onEdit(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
+                    >
+                      <Edit2 size={16} className="text-white" strokeWidth={1.5} />
+                      <span>Editar mensagem</span>
+                    </button>
+                  )}
+
+                  {!isUser && onRegenerate && (
+                    <button
+                      onClick={() => {
+                        onRegenerate(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
+                    >
+                      <RotateCcw size={16} className="text-white" />
+                      <span>Gerar nova resposta</span>
+                    </button>
+                  )}
+
+                  {!isUser && onBranch && (
+                    <button
+                      onClick={() => {
+                        onBranch(msg);
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
+                    >
+                      <SplitSquareHorizontal size={16} className="shrink-0 text-white" />
+                      <span className="whitespace-normal break-words leading-snug">Derivar novo chat</span>
+                    </button>
+                  )}
+
+                  {!isUser && (
+                    <button
+                      onClick={() => {
+                        handleDownloadText();
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left border-t border-white/5 mt-1 pt-1.5"
+                    >
+                      <Download size={16} className="text-white" />
+                      <span>Download em TXT</span>
+                    </button>
+                  )}
+
+                   {!isUser && hasCodeBlocks && (
+                    <button
+                      onClick={() => {
+                        handleDownloadProject();
+                        setShowActions(false);
+                      }}
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-white hover:bg-white/5 transition-colors text-left"
+                    >
+                      <Archive size={16} className="text-white" />
+                      <span>Baixar projeto (ZIP)</span>
+                    </button>
+                  )}
+                  
                   {onMemorize && (
                     <button
                       onClick={() => {
-                        onMemorize(msg.text);
+                        onMemorize(msg.text || msg.content);
                         setShowActions(false);
                       }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-blue-500 hover:bg-bg-surface-hover transition-colors text-left"
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-blue-400 hover:bg-white/5 transition-colors text-left border-t border-white/5 mt-1 pt-1.5"
                     >
-                      <Brain size={16} />
+                      <Brain size={16} className="text-blue-400" />
                       <span>Salvar na Memória</span>
                     </button>
                   )}
@@ -733,75 +841,12 @@ export const MessageBubble: React.FC<MessageBubbleProps> = React.memo(({
                         onContinue(msg);
                         setShowActions(false);
                       }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-blue-400 hover:bg-bg-surface-hover transition-colors text-left"
+                      className="flex items-center gap-3 px-4 py-2 text-[14px] font-medium text-purple-400 hover:bg-white/5 transition-colors text-left border-t border-white/5 mt-1 pt-1.5"
                     >
-                      <Play size={16} />
+                      <Play size={16} className="text-purple-400" />
                       <span>Continuar Geração</span>
                     </button>
                   )}
-
-                  {isUser && onEdit && (
-                    <button
-                      onClick={() => {
-                        onEdit(msg);
-                        setShowActions(false);
-                      }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
-                    >
-                      <Edit2 size={16} />
-                      <span>Editar</span>
-                    </button>
-                  )}
-
-                  {!isUser && onRegenerate && (
-                    <button
-                      onClick={() => {
-                        onRegenerate(msg);
-                        setShowActions(false);
-                      }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
-                    >
-                      <RotateCcw size={16} />
-                      <span>Refazer</span>
-                    </button>
-                  )}
-
-                  {!isUser && onBranch && (
-                    <button
-                      onClick={() => {
-                        onBranch(msg);
-                        setShowActions(false);
-                      }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
-                    >
-                      <SplitSquareHorizontal size={16} />
-                      <span>Derivar novo chat</span>
-                    </button>
-                  )}
-
-                  {!isUser && hasCodeBlocks && (
-                    <button
-                      onClick={() => {
-                        handleDownloadProject();
-                        setShowActions(false);
-                      }}
-                      className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
-                    >
-                      <Archive size={16} />
-                      <span>Baixar Projeto (ZIP)</span>
-                    </button>
-                  )}
-
-                  <button
-                    onClick={() => {
-                      handleDownloadText();
-                      setShowActions(false);
-                    }}
-                    className="flex items-center gap-3 px-4 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface-hover transition-colors text-left"
-                  >
-                    <Download size={16} />
-                    <span>Download</span>
-                  </button>
                 </motion.div>
               )}
             </div>
